@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Environment (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+!.gitignore
+.envrc
+
+# Builds / artifacts
+dist/
+build/
+*.zip
+.cache/
+.wxt/
+.output/
+*.tsbuildinfo
+*.log
+
+# Vendor asset pack (npm run vendor — ~100-200 MB of models, not committed)
+extensions/public/models/
+extensions/public/tessdata/
+extensions/public/tesseract/
+extensions/public/ort/
+extensions/public/vendor.json
+
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
