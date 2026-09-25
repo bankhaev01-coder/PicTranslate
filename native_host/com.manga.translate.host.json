@@ -1,0 +1,9 @@
+{
+  "name": "com.manga.translate.host",
+  "description": "Local Tesseract OCR host for the Image Translator extension",
+  "path": "HOST_PYTHON_LAUNCHER",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
+  ]
+}
