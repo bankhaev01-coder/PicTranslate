@@ -1,0 +1,37 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 320px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1a1a1a;
+  background: #fff;
+}
+
+.popup { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+h1 { font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex: none; }
+.dot.ok { background: #16a34a; }
+.dot.fail { background: #dc2626; }
+.engine-tag { font-size: 11px; font-weight: 400; color: #888; margin-left: auto; }
+
+button {
+  border: 1px solid #d0d0d0; background: #f7f7f7; border-radius: 8px;
+  padding: 8px 10px; font: inherit; cursor: pointer; text-align: left;
+}
+button:hover:not(:disabled) { background: #efefef; }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover:not(:disabled) { background: #1d4ed8; }
+button:disabled { opacity: .55; cursor: default; }
+
+.note { color: #555; font-size: 12px; min-height: 16px; }
+
+.result {
+  border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px;
+  max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.result .src { color: #777; font-size: 12px; margin-bottom: 6px; }
+.result .err { color: #b91c1c; }
+.hint { color: #888; font-size: 11px; }

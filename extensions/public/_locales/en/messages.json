@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Image Translator",
+    "description": "Extension name"
+  },
+  "extDescription": {
+    "message": "Translate text on images: all images of a page at once, plus a selection tool to re-translate tricky regions.",
+    "description": "Extension description"
+  },
+  "actionTitle": {
+    "message": "Translate images on this page",
+    "description": "Toolbar button tooltip"
+  }
+}
