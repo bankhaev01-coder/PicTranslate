@@ -1,0 +1,11 @@
+{
+  "pairs": [
+    { "id": "en-ru", "model": "Xenova/opus-mt-en-ru", "approxMB": 77 },
+    { "id": "ru-en", "model": "Xenova/opus-mt-ru-en", "approxMB": 77 }
+  ],
+  "ocrLangs": [
+    { "id": "eng", "label": "English", "approxMB": 4 },
+    { "id": "rus", "label": "Русский", "approxMB": 6 }
+  ],
+  "notes": "Single source of truth for scripts/vendor.mjs and the extension. Keep in sync."
+}
