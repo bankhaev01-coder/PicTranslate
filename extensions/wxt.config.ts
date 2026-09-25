@@ -17,8 +17,11 @@ export default defineConfig({
     // offscreen → локальные OCR+NMT воркеры (автономный движок)
     permissions: ['activeTab', 'storage', 'scripting', 'tabs', 'contextMenus', 'offscreen', 'nativeMessaging'],
     // CPU ORT + WASM; в бандле удалённые ресурсы не нужны.
+    // ВАЖНО для MV3: Chrome запрещает 'blob:' в script-src extension_pages —
+    // иначе манифест не грузится ("Insecure CSP value"). Воркеры создаются
+    // из файлов расширения (workerBlobURL = false), поэтому blob: не нужен.
     content_security_policy: {
-      extension_pages: "script-src 'self' 'wasm-unsafe-eval' blob:; object-src 'self'",
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
     host_permissions: [
       // Прямые AI Vision API
