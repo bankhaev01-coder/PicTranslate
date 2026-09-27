@@ -105,7 +105,10 @@ export async function cropRegion(
 ): Promise<Blob> {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
   const scale = bitmap.width / window.innerWidth;
-  const viewport = regionToViewport(region.bounds, scrollAtCapture);
+  const viewport = regionToViewport(region.bounds, scrollAtCapture, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
   const b = viewport;
 
   const sx = Math.max(0, Math.round(b.x * scale));

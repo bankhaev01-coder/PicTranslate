@@ -80,10 +80,45 @@ export function initialBubbleFontSize(height: number, padding = 6): number {
  * Область в координатах документа → область во вьюпорте на момент скриншота.
  * Скролл между выделением и Enter иначе вырезает чужой кусок (п.3):
  * captureVisibleTab снимает видимую часть, поэтому вычитаем scroll кадра.
+ *
+ * Если заданы размеры вьюпорта (`viewportSize`), результат безопасно обрезается
+ * по границам кадра: если область частично или полностью проскроллена за экран,
+ * ширина/высота не становятся отрицательными, а координаты не вылетают за canvas.
  */
 export function regionToViewport(
   bounds: Bounds,
   scroll: { x: number; y: number },
+  viewportSize?: { width: number; height: number },
 ): Bounds {
-  return { x: bounds.x - scroll.x, y: bounds.y - scroll.y, width: bounds.width, height: bounds.height };
+  const x = bounds.x - scroll.x;
+  const y = bounds.y - scroll.y;
+  if (!viewportSize) {
+    return { x, y, width: bounds.width, height: bounds.height };
+  }
+
+  const clampedX = Math.max(0, Math.min(x, viewportSize.width));
+  const clampedY = Math.max(0, Math.min(y, viewportSize.height));
+  const right = Math.max(0, Math.min(x + bounds.width, viewportSize.width));
+  const bottom = Math.max(0, Math.min(y + bounds.height, viewportSize.height));
+
+  return {
+    x: clampedX,
+    y: clampedY,
+    width: Math.max(0, right - clampedX),
+    height: Math.max(0, bottom - clampedY),
+  };
+}
+
+/**
+ * Стабильный ключ области для флага «переведено»: id, иначе координаты рамки.
+ * Единый для overlay и injected — иначе области без id считаются по-разному.
+ */
+export function regionKey(region: {
+  id?: string;
+  shape: string;
+  bounds: Bounds;
+}): string {
+  if (region.id) return region.id;
+  const b = region.bounds;
+  return `${region.shape}:${b.x},${b.y},${b.width},${b.height}`;
 }

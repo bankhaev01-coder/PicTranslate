@@ -4,6 +4,7 @@ import {
   initialBubbleFontSize,
   lassoPathData,
   mapBoxToViewport,
+  regionKey,
   regionToViewport,
 } from '../selection';
 
@@ -87,5 +88,54 @@ describe('regionToViewport', () => {
   it('leaves bounds untouched when nothing scrolled', () => {
     const vp = regionToViewport({ x: 10, y: 20, width: 30, height: 40 }, { x: 0, y: 0 });
     expect(vp).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+  });
+
+  it('clamps bounds when region is partially or completely offscreen', () => {
+    const viewportSize = { width: 800, height: 600 };
+
+    // Частично вылезает слева и сверху
+    const partialTopLeft = regionToViewport(
+      { x: 50, y: 50, width: 100, height: 100 },
+      { x: 100, y: 100 },
+      viewportSize,
+    );
+    expect(partialTopLeft).toEqual({ x: 0, y: 0, width: 50, height: 50 });
+
+    // Частично вылезает справа и снизу
+    const partialBottomRight = regionToViewport(
+      { x: 750, y: 550, width: 100, height: 100 },
+      { x: 0, y: 0 },
+      viewportSize,
+    );
+    expect(partialBottomRight).toEqual({ x: 750, y: 550, width: 50, height: 50 });
+
+    // Полностью ушло за экран (скролл дальше всей области)
+    const fullyOffscreen = regionToViewport(
+      { x: 100, y: 100, width: 100, height: 100 },
+      { x: 300, y: 300 },
+      viewportSize,
+    );
+    expect(fullyOffscreen).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+  });
+});
+
+describe('regionKey', () => {
+  it('prefers region id when present', () => {
+    expect(
+      regionKey({
+        id: 'r42',
+        shape: 'rectangle',
+        bounds: { x: 10, y: 20, width: 30, height: 40 },
+      }),
+    ).toBe('r42');
+  });
+
+  it('generates deterministic shape-and-bounds key when id is missing', () => {
+    expect(
+      regionKey({
+        shape: 'oval',
+        bounds: { x: 15, y: 25, width: 35, height: 45 },
+      }),
+    ).toBe('oval:15,25,35,45');
   });
 });

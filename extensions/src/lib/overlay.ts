@@ -8,13 +8,17 @@ import type {
   SelectionShape,
   TranslateResult,
 } from './types';
-import { boundsOf, initialBubbleFontSize, lassoPathData, mapBoxToViewport } from './selection';
+import { boundsOf, initialBubbleFontSize, lassoPathData, mapBoxToViewport, regionKey } from './selection';
 import i18n from './i18n';
 
 export interface OverlayCallbacks {
   onTranslate: (images: PageImage[]) => void;
-  /** Мульти-выделение: пользователь набрал N областей и нажал «Перевести выбранное». */
-  onRegionsSelected: (regions: SelectionRegion[]) => void;
+  /**
+   * Мульти-выделение: пользователь набрал N областей и нажал «Перевести выбранное».
+   * Возвращаемый промис — активная пачка: overlay держит кнопку заблокированной,
+   * пока он не завершится (двойной Enter во время перевода — пропуск).
+   */
+  onRegionsSelected: (regions: SelectionRegion[]) => Promise<void> | void;
   /** Пользователь убрал изображение из очереди (до или во время перевода). */
   onRemoveImage: (imageId: string) => void;
   /** Убрана одна область выделения — сбросить её флаг «переведено». */
@@ -80,6 +84,8 @@ export class OverlayUI {
   private regionsBusy = false;
   /** Постоянные контуры выбранных областей в координатах документа. */
   private regionMarks?: HTMLElement;
+  /** Поколение выделения: clearRegions гасит прилетевшие позже плашки. */
+  private regionToken = 0;
   /** SVG-узлы контуров: id области → узел (для точечного удаления). */
   private regionNodes = new Map<string, SVGElement>();
   /** Плашки переводов поверх областей: якорь в координатах документа. */
@@ -339,30 +345,22 @@ export class OverlayUI {
     this.regionsBusy = true;
     this.stopSelection();
     this.updateSelectionUI();
-    try {
-      this.cb.onRegionsSelected([...this.regions]);
-    } finally {
-      // Флаг сбрасывает injected.ts через markRegionsIdle() по завершении.
-      // Здесь не сбрасываем: двойной Enter во время перевода — это пропуск.
-    }
-  }
-
-  /** Перевод областей завершён: разблокировать кнопку и счётчик. */
-  markRegionsIdle() {
-    this.regionsBusy = false;
-    this.updateSelectionUI();
-  }
-
-  /** Область переведена: повторный перевод её пропускает. */
-  markRegionTranslated(id: string | undefined) {
-    if (!id) return;
-    this.translatedRegions.add(id);
-    this.updateSelectionUI();
+    // Блок держится до конца ВСЕЙ пачки: флаг снимаем в finally, а не по первой области.
+    void (async () => {
+      try {
+        await this.cb.onRegionsSelected([...this.regions]);
+      } finally {
+        this.regionsBusy = false;
+        this.updateSelectionUI();
+      }
+    })();
   }
 
   /** Сбросить всё выделение: контуры, плашки результатов, счётчик. */
   private clearRegions() {
     this.regions = [];
+    // Токен гасит пачки в полёте: их плашки дропаются в injected по token.
+    this.regionToken++;
     this.translatedRegions.clear();
     this.regionNodes.clear();
     this.regionMarks?.remove();
@@ -377,8 +375,8 @@ export class OverlayUI {
   removeRegion(id: string) {
     const index = this.regions.findIndex((r) => r.id === id);
     if (index === -1) return;
-    this.regions.splice(index, 1);
-    this.translatedRegions.delete(id);
+    const [gone] = this.regions.splice(index, 1);
+    this.translatedRegions.delete(regionKey(gone));
     this.regionNodes.get(id)?.remove();
     this.regionNodes.delete(id);
     this.regionPlates.get(id)?.el.remove();
@@ -395,7 +393,8 @@ export class OverlayUI {
 
   private updateSelectionUI() {
     const count = this.regions.length;
-    const remaining = this.regions.filter((r) => !(r.id && this.translatedRegions.has(r.id))).length;
+    // Тот же ключ, что в injected: области без id считаются по координатам рамки.
+    const remaining = this.regions.filter((r) => !this.translatedRegions.has(regionKey(r))).length;
     this.selCountEl.textContent = i18n.t('overlay.selectedCount', { count });
     this.btnUndoRegion.disabled = count === 0;
     // Всё переведено или идёт перевод — кнопку блокируем, иначе Enter дублирует пачку.
@@ -410,7 +409,9 @@ export class OverlayUI {
    * страницей при скролле и живёт до «Очистить»/Esc, а не 15 секунд.
    */
   showRegionResult(region: SelectionRegion, text: string) {
-    const id = region.id ?? `r${++this.regionSeq}`;
+    // id всегда есть (ставится при создании области): генерить новый тут нельзя,
+    // иначе повторный показ той же области плодит плашки под разными ключами.
+    const id = region.id ?? regionKey(region);
     this.regionPlates.get(id)?.el.remove();
 
     const b = region.bounds;
@@ -663,6 +664,7 @@ export class OverlayUI {
         shape: this.selShape,
         bounds,
         points: docPoints,
+        token: this.regionToken,
       };
       this.regions.push(region);
       this.drawRegionMark(region);

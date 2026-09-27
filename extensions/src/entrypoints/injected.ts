@@ -4,6 +4,7 @@ import { getSettings } from '@/lib/storage';
 import { initI18nFromSettings } from '@/lib/i18n';
 import { runConcurrent } from '@/lib/queue';
 import { OverlayUI } from '@/lib/overlay';
+import { regionKey } from '@/lib/selection';
 import { cropRegion, fetchImageBlob, scanImages, type ImageFetchResult } from '@/lib/scanner';
 import { blobToDataUrl, sendToBackground } from '@/lib/messaging';
 import type {
@@ -28,6 +29,8 @@ export default defineUnlistedScript(() => {
   const doneIds = new Set<string>();
   /** Области выделения, переведённые успешно: повторный Enter их пропускает. */
   const translatedRegions = new Set<string>();
+  /** Поколение выделения: Esc/«Очистить»/новый скан гасят прилетевшие позже плашки. */
+  let batchToken = 0;
   /** Изображения текущей сессии — для пересчёта прогресса при удалении. */
   let sessionImages: PageImage[] = [];
 
@@ -66,6 +69,9 @@ export default defineUnlistedScript(() => {
     closeOverlay();
     removed.clear();
     doneIds.clear();
+    translatedRegions.clear();
+    // Новый скан — новое поколение: пачки в полёте от старого оверлея дропаются.
+    batchToken++;
     sessionImages = images;
     overlay = new OverlayUI(
       {
@@ -78,7 +84,10 @@ export default defineUnlistedScript(() => {
         },
         // Удалённую область переведённой не считаем: заново обвёл — переведи.
         onRegionRemoved: (id) => translatedRegions.delete(id),
-        onRegionsCleared: () => translatedRegions.clear(),
+        onRegionsCleared: () => {
+          translatedRegions.clear();
+          batchToken++;
+        },
         onClose: () => closeOverlay(),
       },
       settings.bubbleShape,
@@ -178,22 +187,24 @@ export default defineUnlistedScript(() => {
     if (!regions.length) return;
     // Повторный Enter переводит только несделанное: готовые области
     // пропускаем, иначе пачка уходит на сервер заново (жалоба п.2).
-    const pending = regions.filter((r) => !translatedRegions.has(keyOf(r)));
-    if (!pending.length) {
-      overlay?.markRegionsIdle();
-      return;
-    }
+    const pending = regions.filter((r) => !translatedRegions.has(regionKey(r)));
+    if (!pending.length) return;
     const settings = await getSettings();
     const cap = await sendToBackground<CaptureVisibleResponse>({ type: 'CAPTURE_VISIBLE' });
     if (!cap.dataUrl) {
       const text = `⚠ ${cap.error ?? 'capture failed'}`;
-      for (const region of pending) overlay?.showRegionResult(region, text);
-      overlay?.markRegionsIdle();
+      for (const region of pending) {
+        if (region.token !== batchToken) continue;
+        overlay?.showRegionResult(region, text);
+      }
       return;
     }
     const shot = cap.dataUrl;
     // Скролл на момент скриншота: кроп вычитает его из документных координат.
     const scrollAtCapture = { x: window.scrollX, y: window.scrollY };
+    // Токен пачки: Esc/«Очистить»/новый скан во время перевода — прилетевшие
+    // позже плашки дропаются, а не всплывают на сброшенное выделение.
+    const token = batchToken;
 
     // Одно CAPTURE_VISIBLE на пачку: все области вырезаются из одного кадра,
     // поэтому N выделений стоят один скриншот, а не N.
@@ -211,23 +222,15 @@ export default defineUnlistedScript(() => {
           dataUrl,
           regionOnly: true,
         });
+        if (region.token !== token) return;
         const failed = Boolean(res.error);
-        if (!failed) translatedRegions.add(keyOf(region));
+        if (!failed) translatedRegions.add(regionKey(region));
         overlay?.showRegionResult(region, res.error ? `⚠ ${res.error}` : res.translation || '—');
-        if (!failed) overlay?.markRegionTranslated(region.id);
-        overlay?.markRegionsIdle();
       },
       (region, error) => {
+        if (region.token !== token) return;
         overlay?.showRegionResult(region, `⚠ ${String(error)}`);
-        overlay?.markRegionsIdle();
       },
     );
-  }
-
-  /** Ключ «переведено» для области: стабильный id, иначе координаты рамки. */
-  function keyOf(region: SelectionRegion): string {
-    if (region.id) return region.id;
-    const b = region.bounds;
-    return `${region.shape}:${b.x},${b.y},${b.width},${b.height}`;
   }
 });
