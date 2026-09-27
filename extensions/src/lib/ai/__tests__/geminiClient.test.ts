@@ -35,7 +35,7 @@ describe('translateWithGemini', () => {
     const res = await translateWithGemini('BASE64', { apiKey: '', targetLang: 'ru' });
     expect(res.error).toMatch(/API key/i);
     expect(res.translation).toBe('');
-    expect(res.model).toBe('gemini:gemini-1.5-flash');
+    expect(res.model).toBe('gemini:gemini-3.8-flash');
     expect(res.latency_ms).toBeGreaterThanOrEqual(0);
   });
 

@@ -2,9 +2,15 @@ import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
 import { translateImage } from '@/lib/api';
 import { hasDirectAiKey, translateWithAI } from '@/lib/ai/engine';
-import { checkNativeHost } from '@/lib/native/nativeClient';
+import { checkNativeHost, sendNativeMessage } from '@/lib/native/nativeClient';
 import { getSettings } from '@/lib/storage';
-import type { CaptureVisibleResponse, Msg, ScanImagesResponse, TranslateResult } from '@/lib/types';
+import type {
+  CaptureVisibleResponse,
+  ContentMsg,
+  Msg,
+  ScanImagesResponse,
+  TranslateResult,
+} from '@/lib/types';
 
 export default defineBackground(() => {
   /* ── контекстное меню ── */
@@ -20,7 +26,7 @@ export default defineBackground(() => {
     if (info.menuItemId === 'translate-images' && tab?.id != null) {
       try {
         await ensureContentScript(tab.id);
-        await browser.tabs.sendMessage(tab.id, { type: 'SCAN_IMAGES' } satisfies Msg);
+        await browser.tabs.sendMessage(tab.id, { type: 'SCAN_IMAGES' } satisfies ContentMsg);
       } catch {
         /* контент-скрипт на этой странице не внедряется (chrome://, store, ...) */
       }
@@ -54,7 +60,16 @@ async function handle(
       await ensureContentScript(msg.tabId);
       return (await browser.tabs.sendMessage(msg.tabId, {
         type: 'SCAN_IMAGES',
-      } satisfies Msg)) as ScanImagesResponse;
+      } satisfies ContentMsg)) as ScanImagesResponse;
+    }
+
+    case 'CLEAR_OVERLAY': {
+      // Роутер для CLEAR_OVERLAY обязателен: скрипт страницы умеет убить панель,
+      // но без этого кейса сообщение из popup до него не доходит.
+      await ensureContentScript(msg.tabId);
+      return (await browser.tabs.sendMessage(msg.tabId, {
+        type: 'CLEAR_OVERLAY',
+      } satisfies ContentMsg)) as { ok: boolean };
     }
 
     case 'TRANSLATE_DATA_URL': {
@@ -82,6 +97,10 @@ async function handle(
 
     case 'CHECK_NATIVE_HOST':
       return checkNativeHost();
+
+    case 'NATIVE_HOST_CALL':
+      // Маршрут для offscreen: там недоступен chrome.runtime.sendNativeMessage.
+      return sendNativeMessage(msg.request);
 
     default:
       return { error: `unknown message: ${(msg as { type?: string })?.type}` };
@@ -117,17 +136,33 @@ async function translateByEngine(
   }
 
   // Локальный движок: переслать в offscreen-документ (владеет OCR+NMT воркерами).
+  // Настройки передаём сообщением: в offscreen недоступен chrome.storage.
   await ensureOffscreen();
   return browser.runtime.sendMessage({
     type: 'TRANSLATE_LOCAL',
     target: 'offscreen',
     dataUrl,
     regionOnly,
+    settings: {
+      uiLang: settings.uiLang,
+      targetLang: settings.targetLang,
+      sourceLang: settings.sourceLang,
+      ocrLangs: settings.ocrLangs,
+      ocrQuality: settings.ocrQuality,
+      mtPair: settings.mtPair,
+      useNativeHost: settings.useNativeHost,
+      externalMt: settings.externalMt,
+      externalMtPriority: settings.externalMtPriority,
+      ocrMinConfidence: settings.ocrMinConfidence ?? 40,
+    },
   } satisfies Msg);
 }
 
 /** Читаемая ошибка об отсутствии API-ключа; дублируется в локалях. */
 function i18nMissingKey(model: string): string {
+  if (model === 'pollinations') {
+    return 'Pollinations requires a free API key — get one at https://enter.pollinations.ai/keys and paste it in Settings.';
+  }
   const vendor = model === 'openai' ? 'OpenAI' : 'Gemini';
   return `${vendor} API key is not configured — open Settings and add your key.`;
 }
@@ -174,7 +209,7 @@ async function ensureContentScript(tabId: number): Promise<void> {
 }
 
 /**
- * Открыть offscreen-документ (reason WORKERS) для локального движка.
+ * Открыть offscreen-документ (reason WORKERS) для локального движка и дождаться готовности.
  * В нём живут tesseract-воркер и ONNX NMT-воркер.
  */
 async function ensureOffscreen(): Promise<void> {
@@ -185,16 +220,31 @@ async function ensureOffscreen(): Promise<void> {
     };
   }).offscreen;
   if (!api) return;
-  try {
-    if (api.hasDocument) {
-      if (await api.hasDocument()) return;
+
+  const isCreated = api.hasDocument ? await api.hasDocument().catch(() => false) : false;
+  if (!isCreated) {
+    try {
+      await api.createDocument({
+        url: 'offscreen.html',
+        reasons: ['WORKERS'],
+        justification: 'Run local OCR (tesseract.js) and offline translation (ONNX) web workers',
+      });
+    } catch {
+      // Документ offscreen может быть только один — конкурентный create не страшен.
     }
-    await api.createDocument({
-      url: 'offscreen.html',
-      reasons: ['WORKERS'],
-      justification: 'Run local OCR (tesseract.js) and offline translation (ONNX) web workers',
-    });
-  } catch {
-    // Документ offscreen может быть только один — конкурентный create не страшен.
+  }
+
+  // Handshake / ping с retry для устранения гонки "Receiving end does not exist"
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      const resp = (await browser.runtime.sendMessage({
+        type: 'PING',
+        target: 'offscreen',
+      } satisfies Msg)) as { ok?: boolean } | undefined;
+      if (resp?.ok) return;
+    } catch {
+      // Offscreen еще не успел инициализироваться или повесить слушатель
+    }
+    await new Promise((r) => setTimeout(r, 50));
   }
 }

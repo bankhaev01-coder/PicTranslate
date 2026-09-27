@@ -11,7 +11,14 @@ export interface GeminiClientOptions {
 
 /** Ответ Gemini generateContent (только используемые поля). */
 interface GeminiApiResponse {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
+  candidates?: {
+    content?: {
+      parts?: {
+        text?: string;
+        thought?: boolean;
+      }[];
+    };
+  }[];
 }
 
 export const GEMINI_PROMPT = `You are an expert manga and comic OCR and translation assistant.
@@ -90,7 +97,7 @@ export async function translateWithGemini(
   const elapsed = () => Math.round(performance.now() - t0);
   const {
     apiKey,
-    model = 'gemini-1.5-flash',
+    model = 'gemini-3.8-flash',
     targetLang,
     timeoutMs = 60_000,
     signal,
@@ -128,7 +135,10 @@ export async function translateWithGemini(
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
     },
   };
 
@@ -170,8 +180,13 @@ export async function translateWithGemini(
     }
 
     const data: GeminiApiResponse = await resp.json();
-    const candidateText =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    // Фильтруем thought parts (reasoning токены Gemini thinking models)
+    const contentParts = parts.filter((p) => !p.thought);
+    const candidateText = (contentParts.length ? contentParts : parts)
+      .map((p) => p.text ?? '')
+      .join('')
+      .trim();
     const parsed = extractJson(candidateText);
 
     return {

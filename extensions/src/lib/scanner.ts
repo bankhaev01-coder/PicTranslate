@@ -1,4 +1,5 @@
 import type { PageImage, Point, SelectionRegion } from './types';
+import { regionToViewport } from './selection';
 
 /**
  * Собрать «интересные» <img> на странице.
@@ -53,18 +54,31 @@ export function findImageElement(id: string): HTMLImageElement | null {
   return document.querySelector<HTMLImageElement>(`img[data-translate-ext-id="${id}"]`);
 }
 
+/** Причина сбоя загрузки изображения (CORS-фейл не отдаёт статус — см. `kind`). */
+export interface ImageFetchFailure {
+  kind: 'http' | 'cors' | 'network';
+  status?: number;
+  detail: string;
+}
+
+export type ImageFetchResult = { ok: true; blob: Blob } | ({ ok: false } & ImageFetchFailure);
+
 /**
  * Загрузить сырые байты изображения.
- * Работает для same-origin и CORS-enabled источников, иначе null
- * (cross-origin без CORS — вызывающая сторона должна предложить скриншот-флоу).
+ * Работает для same-origin и CORS-enabled источников; при сбое возвращает
+ * структурированную причину (вызывающая сторона предлагает скриншот-флоу).
  */
-export async function fetchImageBlob(src: string): Promise<Blob | null> {
+export async function fetchImageBlob(src: string): Promise<ImageFetchResult> {
   try {
     const res = await fetch(src, { credentials: 'omit', mode: 'cors' });
-    if (!res.ok) return null;
-    return await res.blob();
-  } catch {
-    return null;
+    if (!res.ok) {
+      return { ok: false, kind: 'http', status: res.status, detail: `HTTP ${res.status}` };
+    }
+    return { ok: true, blob: await res.blob() };
+  } catch (e) {
+    // CORS/Cloudflare-сбои маскируются браузером под «TypeError: Failed to fetch»:
+    // статус через fetch недоступен, вызывающая сторона предлагает скриншот-флоу.
+    return { ok: false, kind: 'cors', detail: String((e as Error)?.name ?? 'Error') };
   }
 }
 
@@ -77,17 +91,22 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 /**
  * Обрезать скриншот И замаскировать его формой выделения.
  *
- * `region.bounds` / `region.points` заданы в CSS-пикселях вьюпорта, а
- * скриншот — в device-пикселях, поэтому координаты масштабируются через
- * `bitmap.width / window.innerWidth`.
+ * `region.bounds` / `region.points` — в координатах ДОКУМЕНТА, а скриншот —
+ * видимая часть в device-пикселях. `scrollAtCapture` — scroll на момент
+ * скриншота; без него скролл между выделением и Enter вырезает чужой кусок.
  *
  * Маска (прямоугольник / овал / лассо) заливает всё вне формы белым, поэтому
  * соседние арты и рамки панелей не попадают ни в OCR, ни в vision-модель.
  */
-export async function cropRegion(dataUrl: string, region: SelectionRegion): Promise<Blob> {
+export async function cropRegion(
+  dataUrl: string,
+  region: SelectionRegion,
+  scrollAtCapture: { x: number; y: number } = { x: 0, y: 0 },
+): Promise<Blob> {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
   const scale = bitmap.width / window.innerWidth;
-  const b = region.bounds;
+  const viewport = regionToViewport(region.bounds, scrollAtCapture);
+  const b = viewport;
 
   const sx = Math.max(0, Math.round(b.x * scale));
   const sy = Math.max(0, Math.round(b.y * scale));
@@ -105,7 +124,11 @@ export async function cropRegion(dataUrl: string, region: SelectionRegion): Prom
   ctx.fillRect(0, 0, sw, sh);
 
   // CSS-пиксели вьюпорта -> локальные device-пиксели канвы.
-  const local = (p: Point): Point => ({ x: p.x * scale - sx, y: p.y * scale - sy });
+  // Точки лассо хранятся в документных — приводим к вьюпорту кадра.
+  const local = (p: Point): Point => ({
+    x: (p.x - scrollAtCapture.x) * scale - sx,
+    y: (p.y - scrollAtCapture.y) * scale - sy,
+  });
 
   ctx.save();
   ctx.beginPath();

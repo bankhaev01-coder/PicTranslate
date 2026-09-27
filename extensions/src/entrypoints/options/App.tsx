@@ -170,6 +170,20 @@ export default function App() {
         </div>
 
         <div className="field">
+          <label htmlFor="bubbleShape">{t('options.bubbleShape')}</label>
+          <select
+            id="bubbleShape"
+            value={settings.bubbleShape ?? 'oval'}
+            onChange={(e) => patch({ bubbleShape: e.target.value as Settings['bubbleShape'] })}
+          >
+            <option value="oval">{t('options.bubbleShapeOval')}</option>
+            <option value="rectangle">{t('options.bubbleShapeRectangle')}</option>
+            <option value="none">{t('options.bubbleShapeNone')}</option>
+          </select>
+          <div className="hint">{t('options.bubbleShapeHint')}</div>
+        </div>
+
+        <div className="field">
           <label htmlFor="uiLang">{t('options.uiLang')}</label>
           <select
             id="uiLang"
@@ -180,6 +194,29 @@ export default function App() {
             <option value="ru">Русский</option>
             <option value="en">English</option>
           </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="translateConcurrency">
+            {t('options.translateConcurrency')}: {settings.translateConcurrency ?? 1}
+          </label>
+          <input
+            id="translateConcurrency"
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={settings.translateConcurrency ?? 1}
+            onChange={(e) => patch({ translateConcurrency: Number(e.target.value) || 1 })}
+          />
+          <div className="hint">
+            {t('options.translateConcurrencyHint')}
+            {settings.engine === 'local' && (
+              <span style={{ display: 'block', color: 'var(--color-primary, #3b82f6)' }}>
+                ℹ {t('options.translateConcurrencyRecommended')}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="field">

@@ -86,10 +86,36 @@ export default function App() {
     }
   };
 
-  const openOptions = () => {
-    void browser.runtime.openOptionsPage();
-    window.close();
+  const openOptions = async () => {
+    setNote('');
+    try {
+      await browser.runtime.openOptionsPage();
+      window.close();
+    } catch (e) {
+      // openOptionsPage может быть недоступен — открываем настройки вкладкой.
+      try {
+        await browser.tabs.create({ url: new URL('options.html', window.location.origin).toString() });
+        window.close();
+      } catch {
+        setNote(`${t('common.error')}: ${String(e)}`);
+      }
+    }
   };
+
+  const clearOverlay = () =>
+    withActiveTab(async (tabId) => {
+      setNote('');
+      const res = await sendToBackground<{ ok?: boolean; error?: string }>({
+        type: 'CLEAR_OVERLAY',
+        tabId,
+      });
+      if (!res?.ok) {
+        setNote(res?.error || t('popup.notSupported'));
+        return;
+      }
+      setNote(t('popup.overlayCleared'));
+      window.close();
+    });
 
   return (
     <div className="popup">
@@ -105,7 +131,8 @@ export default function App() {
       <button onClick={screenshot} disabled={busy}>
         {busy ? t('common.loading') : t('popup.screenshot')}
       </button>
-      <button onClick={openOptions}>{t('popup.openOptions')}</button>
+      <button onClick={clearOverlay}>{t('popup.clearOverlay')}</button>
+      <button onClick={() => void openOptions()}>{t('popup.openOptions')}</button>
 
       <div className="note">{note}</div>
 

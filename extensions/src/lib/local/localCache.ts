@@ -2,7 +2,8 @@
  * Кеш результатов локального перевода (Cache Storage) — расширение-сторона
  * файлового кеша бэкенда. Ключ = sha256(изображение)+языки+движок+область.
  */
-const CACHE_NAME = 'te-local-results-v1';
+export const OCR_PIPELINE_VERSION = 'v2';
+const CACHE_NAME = `te-local-results-${OCR_PIPELINE_VERSION}`;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней, зеркалит backend CACHE_TTL_SECONDS
 
 interface Stored {

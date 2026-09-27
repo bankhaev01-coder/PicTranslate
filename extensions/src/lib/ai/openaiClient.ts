@@ -2,9 +2,27 @@ import type { TranslateResult } from '../types';
 import { extractJson } from './geminiClient';
 
 export interface OpenAIClientOptions {
-  apiKey: string;
+  /** Может быть пустым для провайдеров без ключа (например, Pollinations). */
+  apiKey?: string;
   baseUrl?: string;
+  /**
+   * Полный URL эндпоинта — когда у провайдера нестандартный путь
+   * (Pollinations: `.../openai` вместо `.../chat/completions`).
+   */
+  url?: string;
   model?: string;
+  /** Префикс в поле `model` результата (`openai:`, `pollinations:` и т.п.). */
+  providerLabel?: string;
+  /**
+   * Pollinations принимает ключ опционально (tier без ключа ограничен).
+   * Для остальных провайдеров без ключа возвращается ошибка конфигурации.
+   */
+  allowAnonymous?: boolean;
+  /**
+   * Доп. заголовки провайдера (OpenRouter просит HTTP-Referer/X-Title
+   * для аналитики; на перевод не влияют).
+   */
+  extraHeaders?: Record<string, string>;
   targetLang: string;
   sourceLang?: string;
   timeoutMs?: number;
@@ -53,19 +71,26 @@ export async function translateWithOpenAI(
   const t0 = performance.now();
   const elapsed = () => Math.round(performance.now() - t0);
   const {
-    apiKey,
+    apiKey = '',
     baseUrl = 'https://api.openai.com/v1',
+    url: urlOverride,
     model = 'gpt-4o',
+    providerLabel = 'openai',
+    allowAnonymous = false,
+    extraHeaders,
     targetLang,
     timeoutMs = 60_000,
     signal,
   } = options;
 
-  if (!apiKey) {
+  const label = `${providerLabel}:${model}`;
+
+  // Ключ обязателен, только если провайдер его требует.
+  if (!apiKey && !allowAnonymous) {
     return {
       source_text: '',
       translation: '',
-      model: `openai:${model}`,
+      model: label,
       latency_ms: elapsed(),
       error: 'OpenAI API key is not configured. Please enter your API key in Settings.',
     };
@@ -104,31 +129,38 @@ export async function translateWithOpenAI(
   if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
 
   const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
-  const url = `${cleanBaseUrl}/chat/completions`;
+  const url = urlOverride ?? `${cleanBaseUrl}/chat/completions`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...extraHeaders };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   try {
     const resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
 
     if (!resp.ok) {
-      let detail = `OpenAI HTTP ${resp.status}`;
+      let detail = `HTTP ${resp.status}`;
       try {
         const errJson: OpenAIErrorBody = await resp.json();
         detail = errJson?.error?.message ?? detail;
       } catch {
         // тело ошибки не JSON — оставляем статус
       }
+      if (resp.status === 401 || resp.status === 403) {
+        detail = `${providerLabel}: authentication failed — ${detail}`;
+      } else if (resp.status === 402) {
+        detail = `${providerLabel}: no credits left (pollen) — ${detail}`;
+      } else if (resp.status === 429) {
+        detail = `${detail} — rate limit, retry later or choose another provider`;
+      }
       return {
         source_text: '',
         translation: '',
-        model: `openai:${model}`,
+        model: label,
         latency_ms: elapsed(),
         error: detail,
       };
@@ -141,7 +173,7 @@ export async function translateWithOpenAI(
     return {
       source_text: parsed.source_text ?? '',
       translation: parsed.translation ?? rawContent,
-      model: `openai:${model}`,
+      model: label,
       detected_language: parsed.detected_language ?? null,
       boxes: Array.isArray(parsed.boxes) ? parsed.boxes : [],
       latency_ms: elapsed(),
@@ -149,12 +181,12 @@ export async function translateWithOpenAI(
   } catch (err: unknown) {
     const msg =
       err instanceof Error && err.name === 'AbortError'
-        ? 'OpenAI request timed out'
+        ? `${providerLabel} request timed out`
         : String(err);
     return {
       source_text: '',
       translation: '',
-      model: `openai:${model}`,
+      model: label,
       latency_ms: elapsed(),
       error: msg,
     };

@@ -26,6 +26,8 @@ export default function LocalSection({ settings, patch }: Props) {
 
   const packReady = Boolean((vendor?.tesseract || settings.useNativeHost) && vendor?.pairs.length);
   const isBundled = (pair: string) => Boolean(vendor?.pairs.includes(pair));
+  /** Пока манифест не прочитан, чекбоксы не блокируем (статус неизвестен). */
+  const isLangBundled = (id: string) => !vendor || Boolean(vendor.ocrLangs.includes(id));
 
   const clearCache = async () => {
     await browser.runtime.sendMessage({ type: 'LOCAL_CACHE_CLEAR', target: 'offscreen' });
@@ -50,23 +52,44 @@ export default function LocalSection({ settings, patch }: Props) {
       <div className="field">
         <label>{t('options.ocrLangs')}</label>
         <div className="lang-checks">
-          {listOcrLangs().map((l) => (
-            <label key={l.id} className="checkbox">
-              <input
-                type="checkbox"
-                checked={settings.ocrLangs.includes(l.id)}
-                onChange={(e) => {
-                  const next = e.target.checked
-                    ? [...settings.ocrLangs, l.id]
-                    : settings.ocrLangs.filter((x) => x !== l.id);
-                  patch({ ocrLangs: next.length ? next : ['eng'] });
-                }}
-              />
-              {l.label} <span className="hint">≈{l.approxMB} МБ</span>
-            </label>
-          ))}
+          {listOcrLangs().map((l) => {
+            const bundled = isLangBundled(l.id);
+            return (
+              <label key={l.id} className="checkbox">
+                <input
+                  type="checkbox"
+                  disabled={!bundled}
+                  checked={settings.ocrLangs.includes(l.id)}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                      ? [...settings.ocrLangs, l.id]
+                      : settings.ocrLangs.filter((x) => x !== l.id);
+                    patch({ ocrLangs: next.length ? next : ['eng'] });
+                  }}
+                />
+                {l.label}{' '}
+                <span className="hint">
+                  ≈{l.approxMB} МБ{bundled ? '' : ` · ${t('options.ocrLangNotBundled')}`}
+                </span>
+              </label>
+            );
+          })}
         </div>
         <div className="hint">{t('options.ocrLangsHint')}</div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="ocrQuality">{t('options.ocrQuality')}</label>
+        <select
+          id="ocrQuality"
+          value={settings.ocrQuality ?? 'balanced'}
+          onChange={(e) => patch({ ocrQuality: e.target.value as Settings['ocrQuality'] })}
+        >
+          <option value="fast">{t('options.ocrQualityFast')}</option>
+          <option value="balanced">{t('options.ocrQualityBalanced')}</option>
+          <option value="best">{t('options.ocrQualityBest')}</option>
+        </select>
+        <div className="hint">{t('options.ocrQualityHint')}</div>
       </div>
 
       <div className="field">
@@ -117,6 +140,53 @@ export default function LocalSection({ settings, patch }: Props) {
       </div>
 
       {!packReady && <div className="status fail">⚠ {t('options.offlinePackMissing')}</div>}
+
+      <div className="field">
+        <label htmlFor="ocrMinConfidence">
+          {t('options.ocrMinConfidence')}: {settings.ocrMinConfidence ?? 40}%
+        </label>
+        <input
+          id="ocrMinConfidence"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={settings.ocrMinConfidence ?? 40}
+          onChange={(e) => patch({ ocrMinConfidence: Number(e.target.value) || 0 })}
+        />
+        <div className="hint">{t('options.ocrMinConfidenceHint')}</div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="externalMt">{t('options.externalMt')}</label>
+        <select
+          id="externalMt"
+          value={settings.externalMt ?? 'off'}
+          onChange={(e) => patch({ externalMt: e.target.value as Settings['externalMt'] })}
+        >
+          <option value="off">{t('options.externalMtOff')}</option>
+          <option value="google">{t('options.externalMtGoogle')}</option>
+          <option value="yandex">{t('options.externalMtYandex')}</option>
+        </select>
+        <div className="hint">{t('options.externalMtHint')}</div>
+      </div>
+
+      {settings.externalMt !== 'off' && (
+        <div className="field">
+          <label htmlFor="externalMtPriority">{t('options.externalMtPriority')}</label>
+          <select
+            id="externalMtPriority"
+            value={settings.externalMtPriority ?? 'prefer'}
+            onChange={(e) =>
+              patch({ externalMtPriority: e.target.value as Settings['externalMtPriority'] })
+            }
+          >
+            <option value="prefer">{t('options.externalMtPrefer')}</option>
+            <option value="fallback">{t('options.externalMtFallback')}</option>
+          </select>
+          <div className="hint">{t('options.externalMtPriorityHint')}</div>
+        </div>
+      )}
 
       <div className="row">
         <button onClick={() => void clearCache()}>{t('options.clearResultCache')}</button>

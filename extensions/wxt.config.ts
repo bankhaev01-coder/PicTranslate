@@ -27,9 +27,21 @@ export default defineConfig({
       // Прямые AI Vision API
       'https://generativelanguage.googleapis.com/*',
       'https://api.openai.com/*',
+      // Бесплатный AI-провайдер Pollinations (OpenAI-совместимый gen-эндпоинт)
+      'https://gen.pollinations.ai/*',
+      // OpenRouter: бесплатные vision-модели через один ключ (OpenAI-совместимый)
+      'https://openrouter.ai/*',
+      // Внешние переводчики автономного движка (только при включённом externalMt)
+      'https://translate.googleapis.com/*',
+      'https://translate.yandex.net/*',
       // Локальный/self-hosted backend (офлайн-режим).
       'http://localhost/*',
       'http://127.0.0.1/*',
+    ],
+    // Произвольные эндпоинты для кастомных AI провайдеров
+    optional_host_permissions: [
+      'https://*/*',
+      'http://*/*',
     ],
     icons: {
       16: '/icon/16.png',

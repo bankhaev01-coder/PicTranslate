@@ -75,7 +75,11 @@ class GeminiAdapter:
                     ],
                 }
             ],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 4096,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
         }
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -90,7 +94,9 @@ class GeminiAdapter:
             )
         resp.raise_for_status()
         data = resp.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        content_parts = [p.get("text", "") for p in parts if not p.get("thought")]
+        text = "".join(content_parts if content_parts else [p.get("text", "") for p in parts]).strip()
         parsed = _extract_json(text)
 
         latency = int((time.perf_counter() - t0) * 1000)

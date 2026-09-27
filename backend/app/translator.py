@@ -63,11 +63,21 @@ async def translate_text(
             resp = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{s.gemini_model}:generateContent",
                 headers={"x-goog-api-key": s.gemini_api_key},
-                json={"contents": [{"role": "model", "contents": [{"text": prompt}]}]},
+                json={
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.2,
+                        "maxOutputTokens": 2048,
+                        "thinkingConfig": {"thinkingBudget": 0},
+                    },
+                },
                 timeout=s.translate_timeout_seconds + 10,
             )
         resp.raise_for_status()
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        data = resp.json()
+        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        content_parts = [p.get("text", "") for p in parts if not p.get("thought")]
+        return "".join(content_parts if content_parts else [p.get("text", "") for p in parts]).strip()
 
     log.warning("translate_text: provider=%s not configured", provider)
     return text

@@ -5,7 +5,11 @@
   ],
   "ocrLangs": [
     { "id": "eng", "label": "English", "approxMB": 4 },
-    { "id": "rus", "label": "Русский", "approxMB": 6 }
+    { "id": "rus", "label": "Русский", "approxMB": 6 },
+    { "id": "jpn", "label": "日本語", "approxMB": 13 },
+    { "id": "jpn_vert", "label": "日本語 (верт.)", "approxMB": 2 },
+    { "id": "chi_sim", "label": "简体中文", "approxMB": 19, "optional": true },
+    { "id": "kor", "label": "한국어", "approxMB": 7, "optional": true }
   ],
-  "notes": "Single source of truth for scripts/vendor.mjs and the extension. Keep in sync."
+  "notes": "Single source of truth for scripts/vendor.mjs and the extension. Keep in sync. optional:true — качаются только при TRANSLATE_VENDOR_EXTRA=1."
 }

@@ -236,7 +236,12 @@ async function main() {
     (lang) => `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${lang}/4.0.0_best/${lang}.traineddata.gz`,
     (lang) => `https://raw.githubusercontent.com/naptha/tessdata/gh-pages/4.0.0_best/${lang}.traineddata.gz`,
   ];
-  for (const lang of registry.ocrLangs) {
+  // optional-пакеты (chi_sim, kor, ...) качаются только при TRANSLATE_VENDOR_EXTRA=1,
+  // чтобы базовая сборка не разрасталась на десятки мегабайт.
+  const withExtra = process.env.TRANSLATE_VENDOR_EXTRA === '1';
+  const ocrLangs = registry.ocrLangs.filter((l) => !l.optional || withExtra);
+  if (withExtra) console.log('  TRANSLATE_VENDOR_EXTRA=1 — включены необязательные пакеты');
+  for (const lang of ocrLangs) {
     const dest = path.join(PUBLIC, 'tessdata', `${lang.id}.traineddata.gz`);
     let ok = false;
     for (const mirror of mirrors) {
@@ -270,7 +275,8 @@ async function main() {
     version: 1,
     baseUrl: '',
     pairs: registry.pairs.map((p) => p.id),
-    ocrLangs: registry.ocrLangs.map((l) => l.id),
+    // Только реально скачанные языки: UI блокирует чекбоксы остальных.
+    ocrLangs: ocrLangs.map((l) => l.id),
     tesseract: true,
     createdAt: new Date().toISOString(),
   };

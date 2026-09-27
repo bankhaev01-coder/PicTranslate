@@ -44,10 +44,7 @@ async function doInit(msg: WorkerIn): Promise<void> {
     onnx?: { wasm?: { wasmPaths?: unknown } };
   }).onnx;
   if (!onnx?.wasm) throw new Error('ONNX WASM backend is unavailable');
-  onnx.wasm.wasmPaths = {
-    mjs: new URL('ort/ort-wasm-simd-threaded.asyncify.mjs', baseUrl).href,
-    wasm: new URL('ort/ort-wasm-simd-threaded.asyncify.wasm', baseUrl).href,
-  };
+  onnx.wasm.wasmPaths = new URL('ort/', baseUrl).href;
 
   if (translateFn && readyModel === model) {
     postMessage({ op: 'ready', id: msg.id, pair });

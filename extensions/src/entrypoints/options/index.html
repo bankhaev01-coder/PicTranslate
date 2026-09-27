@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Настройки открываем в отдельной вкладке: маленькое всплывающее окно
+         (open_in_tab: false) пользователи часто не замечают. WXT читает этот
+         тег при генерации manifest.json, а не поле options_ui в wxt.config.ts. -->
+    <meta name="manifest.open_in_tab" content="true" />
     <title>Image Translator — Settings</title>
   </head>
   <body>

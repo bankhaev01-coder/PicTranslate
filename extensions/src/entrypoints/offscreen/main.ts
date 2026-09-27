@@ -7,33 +7,54 @@
  */
 import i18n, { initI18n } from '@/lib/i18n';
 import { browser } from 'wxt/browser';
-import { getSettings } from '@/lib/storage';
 import { getVendorManifest } from '@/lib/local/vendor';
 import { localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
-import { grayscaleInPlace } from '@/lib/local/preprocess';
+import { grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
 import { chunkText, isMostlyCyrillic, pickPair } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
-import { recognizeText } from '@/lib/local/ocr';
+import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
+import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
 import { sendNativeMessage } from '@/lib/native/nativeClient';
 import { MtClient } from '@/lib/local/mtClient';
-import type { Msg, TranslateResult } from '@/lib/types';
+import type { Box, LocalEngineSettings, Msg, TranslateResult } from '@/lib/types';
 
-await initI18n();
+// Регистрация слушателя синхронно на верхнем уровне, чтобы избежать гонки
+// с createDocument() в service worker ("Receiving end does not exist").
+let i18nReady = false;
+const i18nPromise = initI18n()
+  .then(() => {
+    i18nReady = true;
+  })
+  .catch((e) => {
+    // Не оставляем необработанный rejection: PING должен отвечать и без i18n.
+    console.error('[offscreen] i18n init failed', e);
+  });
 
 const mt = new MtClient();
 
 browser.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
   if ((msg as { target?: string }).target !== 'offscreen') return false;
-  handle(msg)
+
+  if (msg.type === 'PING') {
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  // Для остальных команд дожидаемся готовности переводов i18n
+  (async () => {
+    if (!i18nReady) await i18nPromise;
+    return handle(msg);
+  })()
     .then(sendResponse)
     .catch((e) => sendResponse({ error: String(e) }));
+
   return true;
 });
 
 async function handle(msg: Msg): Promise<unknown> {
   switch (msg.type) {
     case 'TRANSLATE_LOCAL':
-      return localPipeline(msg.dataUrl, msg.regionOnly);
+      return localPipeline(msg.settings, msg.dataUrl, msg.regionOnly);
 
     case 'LOCAL_CACHE_CLEAR':
       await localCacheClear();
@@ -55,29 +76,68 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Декод → оттенки серого (паритет с backend _preprocess) → текст tesseract. */
+/**
+ * Декод → апскейл при малом размере → оттенки серого → многопроходный OCR.
+ * Варианты предобработки и режимы сегментации подбирает recognizeBest по
+ * качеству OCR из настроек (fast/balanced/best).
+ */
 async function ocrFromDataUrl(
   dataUrl: string,
   langs: string[],
   vendor: Awaited<ReturnType<typeof getVendorManifest>>,
-): Promise<string> {
+  settings: LocalEngineSettings,
+  regionOnly: boolean,
+): Promise<OcrResult> {
   const img = await loadImage(dataUrl);
-  const canvas = document.createElement('canvas');
+  let canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
+  if (!ctx) return { text: '', boxes: [], confidence: 0 };
   ctx.drawImage(img, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Апскейл, если размер canvas слишком мал для надежного чтения текста
+  const origW = canvas.width;
+  canvas = upscaleToMinTextHeight(canvas, 300);
+  const scaleRatio = canvas.width / origW;
+
+  const ctx2 = canvas.getContext('2d');
+  if (!ctx2) return { text: '', boxes: [], confidence: 0 };
+  const imageData = ctx2.getImageData(0, 0, canvas.width, canvas.height);
+
+  // Оттенки серого — общая база для всех вариантов предобработки.
   grayscaleInPlace(imageData.data);
-  ctx.putImageData(imageData, 0, 0);
-  return recognizeText(canvas, langs, vendor);
+  ctx2.putImageData(imageData, 0, 0);
+
+  const res = await recognizeBest(canvas, langs, vendor, {
+    quality: settings.ocrQuality,
+    minConfidence: settings.ocrMinConfidence ?? 40,
+    regionOnly,
+  });
+
+  // Если canvas был смасштабирован, возвращаем координаты боксов в исходный масштаб изображения
+  if (scaleRatio !== 1 && res.boxes.length) {
+    res.boxes = res.boxes.map((b) => ({
+      ...b,
+      x: Math.round(b.x / scaleRatio),
+      y: Math.round(b.y / scaleRatio),
+      width: Math.round(b.width / scaleRatio),
+      height: Math.round(b.height / scaleRatio),
+    }));
+  }
+
+  return res;
 }
 
-async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<TranslateResult> {
+async function localPipeline(
+  settings: LocalEngineSettings,
+  dataUrl: string,
+  regionOnly: boolean,
+): Promise<TranslateResult> {
+  // Настройки приходят из background: в offscreen недоступен chrome.storage.
+  await initI18n(settings.uiLang);
   const t0 = performance.now();
   const elapsed = () => Math.round(performance.now() - t0);
-  const settings = await getSettings();
   const vendor = await getVendorManifest();
 
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
@@ -107,7 +167,15 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
 
   // 1) OCR — либо встроенный tesseract-воркер, либо native host.
   let sourceText = '';
-  const langs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
+  let detectedBoxes: Box[] = [];
+  const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
+  // Языковые пакеты, которых нет в офлайн-сборке, отбрасываем: иначе tesseract
+  // упадёт на 404 вместо понятной ошибки.
+  const bundledLangs = vendor?.ocrLangs ? new Set(vendor.ocrLangs) : null;
+  const langs = bundledLangs ? requestedLangs.filter((l) => bundledLangs.has(l)) : requestedLangs;
+  if (!langs.length && !settings.useNativeHost) {
+    return fail(i18n.t('local.errOcrLangMissing', { langs: requestedLangs.join(', ') }));
+  }
   try {
     if (settings.useNativeHost) {
       const native = await sendNativeMessage({ action: 'ocr', image_base64: dataUrl, langs });
@@ -115,8 +183,17 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
         return fail(`Native OCR: ${native.error ?? 'host did not respond'}`);
       }
       sourceText = (native.source_text ?? '').trim();
+      detectedBoxes = (native.boxes ?? []).map((b) => ({
+        x: b.x,
+        y: b.y,
+        width: b.width,
+        height: b.height,
+        text: b.text,
+      }));
     } else {
-      sourceText = await ocrFromDataUrl(dataUrl, langs, vendor);
+      const ocrRes = await ocrFromDataUrl(dataUrl, langs, vendor, settings, regionOnly);
+      sourceText = ocrRes.text;
+      detectedBoxes = ocrRes.boxes;
     }
   } catch (e) {
     return fail(`OCR: ${String(e)}`);
@@ -126,6 +203,11 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
   }
 
   const detected = isMostlyCyrillic(sourceText) ? 'ru' : 'en';
+
+  // Внешний переводчик включён и приоритетнее локальной модели?
+  const externalFirst = settings.externalMt !== 'off' && settings.externalMtPriority === 'prefer';
+  const tryExternal = () =>
+    externalTranslate(settings, sourceText, detected, scope, cacheId, elapsed, detectedBoxes);
 
   // 2) Выбор направления MT
   const available = listPairs().map((p) => p.id);
@@ -147,13 +229,30 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
       translation: sourceText,
       model: 'local:passthrough',
       detected_language: detected,
-      boxes: [],
+      boxes: detectedBoxes.map((b) => ({ ...b, translation: b.text })),
       latency_ms: elapsed(),
     };
     await localCacheSet(scope, cacheId, passthrough);
     return passthrough;
   }
+
+  // 2.1) Внешний переводчик первым: сеть вместо локальной ONNX-модели.
+  // Модели при этом не загружаются — экономится память и время.
+  let externalError: string | undefined;
+  if (externalFirst) {
+    const ext = await tryExternal();
+    if (!ext.error) return ext;
+    externalError = ext.error;
+  }
+
   if (!pick.pair) {
+    if (externalFirst && externalError) {
+      // Внешний уже пробовали и он упал, локальной пары тоже нет — показываем причину.
+      return fail(externalError, sourceText);
+    }
+    if (!externalFirst && settings.externalMt !== 'off') {
+      return tryExternal();
+    }
     return fail(i18n.t('local.errPairMissing', { pair: pick.missingPair ?? '?' }), sourceText);
   }
 
@@ -161,6 +260,9 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
   try {
     await mt.ensurePair(pick.pair, vendor);
   } catch (e) {
+    if (!externalFirst && settings.externalMt !== 'off') {
+      return tryExternal();
+    }
     return fail(`${i18n.t('local.errModelLoad')}: ${String((e as Error).message ?? e)}`, sourceText);
   }
 
@@ -170,17 +272,139 @@ async function localPipeline(dataUrl: string, regionOnly: boolean): Promise<Tran
     for (const chunk of chunks) {
       parts.push(await mt.translate(pick.pair, chunk));
     }
+    const fullTranslation = parts.join('\n');
+
+    // Переводим текст в боксах, чтобы пузыри речи отображали перевод
+    const translatedBoxes: Box[] = [];
+    for (const b of detectedBoxes) {
+      const boxText = (b.text ?? '').trim();
+      if (!boxText) continue;
+      try {
+        const trans = await mt.translate(pick.pair, boxText);
+        translatedBoxes.push({
+          ...b,
+          translation: trans,
+        });
+      } catch {
+        translatedBoxes.push({
+          ...b,
+          translation: fullTranslation, // фолбэк на общий перевод
+        });
+      }
+    }
+
     const result: TranslateResult = {
       source_text: sourceText,
-      translation: parts.join('\n'),
+      translation: fullTranslation,
       model: `local:${pick.pair}`,
       detected_language: detected,
-      boxes: [],
+      boxes: translatedBoxes,
       latency_ms: elapsed(),
     };
     await localCacheSet(scope, cacheId, result);
     return result;
   } catch (e) {
+    if (!externalFirst && settings.externalMt !== 'off') {
+      return tryExternal();
+    }
     return fail(`${i18n.t('local.errMtFailed')}: ${String((e as Error).message ?? e)}`, sourceText);
   }
+}
+
+/** Провайдер внешнего перевода из настроек (вызывается только при externalMt !== 'off'). */
+function externalProvider(settings: LocalEngineSettings): MtProvider {
+  return settings.externalMt === 'yandex' ? 'yandex' : 'google';
+}
+
+/**
+ * Внешний переводчик (Google или Яндекс): текст уходит на внешний сервис,
+ * поэтому вызывается только когда провайдер явно выбран в настройках — первым
+ * шагом ('prefer') или как запасной вариант при сбое локальной модели.
+ * Никогда не бросает: сбои возвращаются как TranslateResult с `error`.
+ */
+async function externalTranslate(
+  settings: LocalEngineSettings,
+  sourceText: string,
+  detected: string,
+  scope: string,
+  cacheId: string,
+  elapsed: () => number,
+  detectedBoxes: Box[] = [],
+): Promise<TranslateResult> {
+  const { from, to } = guessExternalDirection(settings, sourceText);
+  const provider = externalProvider(settings);
+  const source = settings.sourceLang === 'auto' ? 'auto' : from;
+  try {
+    const { translation, detected: extDetected } = await translateLongText(sourceText, source, to, {
+      provider,
+    });
+    if (!translation.trim()) {
+      return {
+        source_text: sourceText,
+        translation: '',
+        model: `external:${provider}:${from}-${to}`,
+        latency_ms: elapsed(),
+        error: i18n.t('local.errExternalFailed'),
+      };
+    }
+    // Каждый пузырь переводим отдельно (как на локальном пути), чтобы в пузырях
+    // речи был свой текст; при сбое падаем на общий перевод.
+    const boxes = await translateBoxesExternal(
+      detectedBoxes,
+      provider,
+      source,
+      to,
+      translation.trim(),
+    );
+    const result: TranslateResult = {
+      source_text: sourceText,
+      translation,
+      model: `external:${provider}:${from}-${to}`,
+      detected_language: extDetected ?? detected,
+      boxes,
+      latency_ms: elapsed(),
+    };
+    await localCacheSet(scope, cacheId, result);
+    return result;
+  } catch (e) {
+    return {
+      source_text: sourceText,
+      translation: '',
+      model: `external:${provider}:${from}-${to}`,
+      latency_ms: elapsed(),
+      error: `${i18n.t('local.errExternalFailed')}: ${String((e as Error).message ?? e)}`,
+    };
+  }
+}
+
+/** Перевод текста каждого бокса через внешний сервис с фолбэком на общий перевод. */
+async function translateBoxesExternal(
+  boxes: Box[],
+  provider: MtProvider,
+  source: string,
+  target: string,
+  fullTranslation: string,
+): Promise<Box[]> {
+  const out: Box[] = [];
+  for (const b of boxes) {
+    const boxText = (b.text ?? '').trim();
+    if (!boxText) continue;
+    try {
+      const { translation } = await translateLongText(boxText, source, target, { provider });
+      out.push({ ...b, translation: translation.trim() || fullTranslation });
+    } catch {
+      out.push({ ...b, translation: fullTranslation });
+    }
+  }
+  return out;
+}
+
+/** Направление для внешнего MT по той же эвристике письма, что и pickPair. */
+function guessExternalDirection(
+  settings: LocalEngineSettings,
+  sourceText: string,
+): { from: string; to: string } {
+  const to = settings.targetLang;
+  if (settings.sourceLang !== 'auto') return { from: settings.sourceLang, ...{ to } };
+  return { from: isMostlyCyrillic(sourceText) ? 'ru' : 'en', to };
 }

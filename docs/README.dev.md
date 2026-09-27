@@ -10,13 +10,13 @@ translate/
 │   ├── src/
 │   │   ├── entrypoints/
 │   │   │   ├── background.ts       # Service worker: роутер сообщений, captureVisibleTab, инъекция
-│   │   │   ├── injected.ts         # Unlisted script: скан страницы, оверлей, выделение (инжектится по activeTab)
+│   │   │   ├── injected.ts         # Unlisted script: скан страницы, оверлей, мульти-выделение областей (activeTab)
 │   │   │   ├── popup/              # Popup (React): скан, скриншот-перевод, настройки
 │   │   │   └── options/            # Options (React): бэкенд, модель, языки
 │   │   ├── lib/
 │   │   │   ├── api.ts              # HTTP-клиент бэкенда (/translate, /health)
 │   │   │   ├── scanner.ts          # Поиск <img>, получение байтов, кроп скриншота
-│   │   │   ├── overlay.ts          # Shadow-DOM: панель, статусы, ярлыки, выделение rect
+│   │   │   ├── overlay.ts          # Shadow-DOM: панель, статусы, мульти-выделение (rect/oval/lasso), пузыри
 │   │   │   ├── messaging.ts        # Promisified sendMessage + blob→dataURL
 │   │   │   ├── storage.ts          # chrome.storage: настройки
 │   │   │   ├── i18n.ts             # i18next init (ru/en)
@@ -69,14 +69,14 @@ translate/
 | Error Lens | Ошибки прямо в строке |
 | REST Client | Проверка `/translate` вручную |
 
-## Шаг 1. Инициализация
+## 1. Инициализация
 
 ```powershell
 cd <корень репозитория>
 git init          # репозиторий проекта (не домашний!)
 ```
 
-## Шаг 2. Бэкенд: venv, зависимости, .env
+## 2. Бэкенд: venv, зависимости, .env
 
 ```powershell
 cd backend
@@ -97,7 +97,7 @@ FILE_CACHE_DIR=/app/cache
 ALLOWED_ORIGINS=chrome-extension://*,http://localhost:5173
 ```
 
-## 3) Автономная сборка расширения (рекомендуемый режим)
+## 3. Автономная сборка расширения (рекомендуемый режим)
 
 Автономный режим не требует запуска Python/FastAPI/Docker. `npm run vendor` один раз
 загружает и проверяет модели, Tesseract и ORT, затем `npm run build` создаёт пакет.
@@ -122,7 +122,7 @@ npm run build        # → dist/chrome-mv3
 идемпотентен и не перезагружает корректные файлы. Если пакет отсутствует или
 повреждён, локальный движок завершает задачу ошибкой, а не скачивает модель из CDN.
 
-## 4) Необязательный backend
+## 4. Необязательный backend
 
 Backend нужен только для облачных моделей, собственного REST API или отдельного
 экспериментального Tesseract-сервиса. Для полностью автономной работы его запускать
@@ -144,7 +144,25 @@ cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-## 5) Тесты
+## Бесплатные vision-модели для перевода картинок
+
+| Провайдер | Что нужно | Карта | Лимиты (ориентир) |
+|---|---|---|---|
+| OpenRouter (`openrouter/free`) | ключ с openrouter.ai/keys | не нужна | дневной лимит на бесплатные модели; id ротируются, поэтому дефолт — роутер |
+| Google AI Studio (Gemini free tier) | ключ AI Studio | не нужна | щедрый free tier на Flash; ключ уже поддерживается в настройках |
+| Pollinations | ключ с enter.pollinations.ai/keys | не нужна | vision только с ключом; анонимно — лишь текст |
+| Groq free tier (Llama Vision) | ключ Groq | не нужна | быстрый free tier; подключается как Custom через `https://api.groq.com/openai/v1` |
+| Ollama / LM Studio локально | ничего, модель на диске | — | без лимитов; подключается как Custom через `http://localhost:11434/v1` |
+
+В UI есть готовый провайдер OpenRouter: дефолт `openrouter/free` сам подбирает
+свободную vision-модель. Вписанный вручную id может протухнуть — роутер стабильнее.
+Groq и локальные модели идут через карточку Custom: меняется только base URL,
+новый код под каждый такой сервис не пишем.
+
+Нюанс бесплатных тиров: провайдеры обычно логируют промпты. Чувствительные
+кадры — через локальный движок или свой Custom-эндпоинт, а не через free tier.
+
+## 5. Тесты
 
 ```powershell
 # Автономный пакет и unit-тесты расширения
@@ -157,7 +175,7 @@ cd ..\backend
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-Текущий проверенный результат: `41 passed` для Vitest, `16 passed` для pytest,
+Текущий проверенный результат: `96 passed` для Vitest, `16 passed` для pytest,
 `npm run compile` и `npm run build` — exit 0. Реальный локальный inference моделей
 проверен: `en-ru` переводит `Hello world` в `Приветствую мир`, `ru-en` — `Привет мир`
 в `Hello, peace`.

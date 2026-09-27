@@ -1,4 +1,5 @@
 import { browser } from 'wxt/browser';
+import type { Msg } from '../types';
 
 export const NATIVE_HOST_NAME = 'com.manga.translate.host';
 
@@ -33,7 +34,18 @@ export async function sendNativeMessage(msg: NativeHostRequest): Promise<NativeH
   };
 
   if (typeof runtime.sendNativeMessage !== 'function') {
-    return { ok: false, error: 'Native messaging is not available in this context' };
+    // Offscreen-документы лишены chrome.runtime.sendNativeMessage (Chromium:
+    // _api_features.json, контекст offscreen_extension) — выполняем вызов
+    // через background, у которого есть разрешение nativeMessaging.
+    try {
+      const viaBackground = (await browser.runtime.sendMessage({
+        type: 'NATIVE_HOST_CALL',
+        request: msg,
+      } satisfies Msg)) as NativeHostResponse | undefined;
+      return viaBackground ?? { ok: false, error: 'Empty response from the background router' };
+    } catch (e: unknown) {
+      return { ok: false, error: String(e) };
+    }
   }
 
   try {

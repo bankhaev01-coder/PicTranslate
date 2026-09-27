@@ -1,13 +1,14 @@
 import { defineUnlistedScript } from 'wxt/utils/define-unlisted-script';
 import { browser } from 'wxt/browser';
 import { getSettings } from '@/lib/storage';
-import { initI18n } from '@/lib/i18n';
-import { TRANSLATE_CONCURRENCY } from '@/lib/constants';
+import { initI18nFromSettings } from '@/lib/i18n';
+import { runConcurrent } from '@/lib/queue';
 import { OverlayUI } from '@/lib/overlay';
-import { cropRegion, fetchImageBlob, scanImages } from '@/lib/scanner';
+import { cropRegion, fetchImageBlob, scanImages, type ImageFetchResult } from '@/lib/scanner';
 import { blobToDataUrl, sendToBackground } from '@/lib/messaging';
 import type {
   CaptureVisibleResponse,
+  ContentMsg,
   Msg,
   PageImage,
   SelectionRegion,
@@ -21,9 +22,24 @@ import type {
  */
 export default defineUnlistedScript(() => {
   let overlay: OverlayUI | null = null;
+  /** Изображения, убранные пользователем из очереди (в рамках текущего скана). */
+  const removed = new Set<string>();
+  /** Изображения, перевод которых уже завершён (успех или ошибка). */
+  const doneIds = new Set<string>();
+  /** Области выделения, переведённые успешно: повторный Enter их пропускает. */
+  const translatedRegions = new Set<string>();
+  /** Изображения текущей сессии — для пересчёта прогресса при удалении. */
+  let sessionImages: PageImage[] = [];
+
+  /** Прогресс «переведено X из Y» без учёта убранных из очереди картинок. */
+  function syncProgress() {
+    const done = [...doneIds].filter((id) => !removed.has(id)).length;
+    const total = sessionImages.filter((img) => !removed.has(img.id)).length;
+    overlay?.setProgress(done, total);
+  }
 
   /* ── сообщения из popup / background ── */
-  browser.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((msg: Msg | ContentMsg, _sender, sendResponse) => {
     if (msg.type === 'PING') {
       sendResponse({ ok: true });
       return true;
@@ -43,16 +59,30 @@ export default defineUnlistedScript(() => {
   });
 
   async function scanAndShow(): Promise<PageImage[]> {
-    await initI18n();
+    await initI18nFromSettings();
     const settings = await getSettings();
     const images = scanImages(settings.minImageSize);
 
     closeOverlay();
-    overlay = new OverlayUI({
-      onTranslate: (imgs) => void translateAll(imgs),
-      onRegion: (region) => void translateRegion(region),
-      onClose: () => closeOverlay(),
-    });
+    removed.clear();
+    doneIds.clear();
+    sessionImages = images;
+    overlay = new OverlayUI(
+      {
+        onTranslate: (imgs) => void translateAll(imgs),
+        onRegionsSelected: (regions) => void translateRegions(regions),
+        onRemoveImage: (id) => {
+          // Уже переведённая картинка больше не участвует в прогрессе.
+          removed.add(id);
+          syncProgress();
+        },
+        // Удалённую область переведённой не считаем: заново обвёл — переведи.
+        onRegionRemoved: (id) => translatedRegions.delete(id),
+        onRegionsCleared: () => translatedRegions.clear(),
+        onClose: () => closeOverlay(),
+      },
+      settings.bubbleShape,
+    );
     overlay.setImages(images);
     return images;
   }
@@ -62,76 +92,142 @@ export default defineUnlistedScript(() => {
     overlay = null;
   }
 
-  /* ── перевод всех изображений (ограниченная параллельность) ── */
+  /* ── перевод всех изображений (очередь с параллельностью из настроек) ── */
   async function translateAll(images: PageImage[]) {
-    const queue = [...images];
-    const total = queue.length;
-    let done = 0;
+    const settings = await getSettings();
+    /** Активные = не убранные пользователем из очереди. */
+    const activeIds = () => images.filter((img) => !removed.has(img.id));
+    const progress = () => ({
+      done: [...doneIds].filter((id) => !removed.has(id)).length,
+      total: activeIds().length,
+    });
 
-    const workers = Array.from(
-      { length: Math.max(1, Math.min(TRANSLATE_CONCURRENCY, total)) },
-      () => runWorker(),
-    );
-    await Promise.all(workers);
-
-    async function runWorker() {
-      for (;;) {
-        const img = queue.shift();
-        if (!img) return;
-        overlay?.setStatus(img.id, 'working', undefined, done, total);
-
-        const result = await translateOne(img);
-        done += 1;
-        overlay?.setStatus(img.id, result.error ? 'error' : 'done', result, done, total);
+    const finish = (img: PageImage, result: TranslateResult) => {
+      doneIds.add(img.id);
+      if (removed.has(img.id)) {
+        syncProgress();
+        return;
       }
-    }
+      const { done, total } = progress();
+      overlay?.setStatus(img.id, result.error ? 'error' : 'done', result, done, total);
+    };
+
+    await runConcurrent(
+      images,
+      settings.translateConcurrency ?? 1,
+      async (img) => {
+        if (removed.has(img.id)) return;
+        const { done, total } = progress();
+        overlay?.setStatus(img.id, 'working', undefined, done, total);
+        finish(img, await translateOne(img));
+      },
+      // Падение одной картинки не обрывает очередь: помечаем её ошибкой
+      // и продолжаем переводить остальные.
+      (img, _index, error) => finish(img, failedResult(error)),
+      // Убранные из очереди картинки не запускаются и не считаются ошибками.
+      (img) => removed.has(img.id),
+    );
+  }
+
+  /** Результат-заглушка для необработанного исключения в очереди. */
+  function failedResult(error: unknown): TranslateResult {
+    return {
+      source_text: '',
+      translation: '',
+      model: 'n/a',
+      latency_ms: 0,
+      error: String(error),
+    };
   }
 
   async function translateOne(img: PageImage): Promise<TranslateResult> {
-    const blob = await fetchImageBlob(img.src);
-    if (!blob) {
+    const loaded = await fetchImageBlob(img.src);
+    if (!loaded.ok) {
       return {
         source_text: '',
         translation: '',
         model: 'n/a',
         latency_ms: 0,
-        error: 'Image is not readable (CORS/blocked). Use "Translate visible area".',
+        error: imageFetchError(loaded),
       };
     }
-    const dataUrl = await blobToDataUrl(blob);
+    const dataUrl = await blobToDataUrl(loaded.blob);
     const res = await sendToBackground<TranslateResult>({
       type: 'TRANSLATE_DATA_URL',
       imageId: img.id,
       dataUrl,
     });
-    // Комикс-пузыри для каждого найденного речевого пузыря на этом изображении.
-    if (res.boxes?.length) overlay?.showBubbles(img.id, res.boxes);
+    // Комикс-пузыри — только если картинку не убрали из очереди за время запроса.
+    if (res.boxes?.length && !removed.has(img.id)) overlay?.showBubbles(img.id, res.boxes);
     return res;
   }
 
-  /* ── инструмент выделения: обрезать скриншот и перевести заново область ── */
-  async function translateRegion(region: SelectionRegion) {
-    await initI18n();
-    const cap = await sendToBackground<CaptureVisibleResponse>({ type: 'CAPTURE_VISIBLE' });
-    if (!cap.dataUrl) {
-      overlay?.showRegionResult(region, `⚠ ${cap.error ?? 'capture failed'}`);
+  /**
+   * Человекочитаемая причина сбоя загрузки. Для CORS-ошибок статус (403/429)
+   * скрыт браузером — подробности см. в консоли страницы по метке [translate-ext DIAG].
+   */
+  function imageFetchError(f: Extract<ImageFetchResult, { ok: false }>): string {
+    if (f.kind === 'http') {
+      return `Image rejected by the server (HTTP ${f.status}). Retry later or use "Translate visible area".`;
+    }
+    return 'Image is not readable (CORS/blocked or CDN rate limit). Use "Translate visible area" — details in the page console under [translate-ext DIAG].';
+  }
+
+  /* ── выделение: один скриншот на пачку, кроп и перевод каждой области ── */
+  async function translateRegions(regions: SelectionRegion[]) {
+    if (!regions.length) return;
+    // Повторный Enter переводит только несделанное: готовые области
+    // пропускаем, иначе пачка уходит на сервер заново (жалоба п.2).
+    const pending = regions.filter((r) => !translatedRegions.has(keyOf(r)));
+    if (!pending.length) {
+      overlay?.markRegionsIdle();
       return;
     }
-
-    try {
-      // Маскирование формой выполняется на скриншоте, чтобы графический шум
-      // вокруг текста (ары фона, рамки панелей) не доходил до OCR/vision-модели.
-      const blob = await cropRegion(cap.dataUrl, region);
-      const dataUrl = await blobToDataUrl(blob);
-      const res = await sendToBackground<TranslateResult>({
-        type: 'TRANSLATE_DATA_URL',
-        imageId: 'region',
-        dataUrl,
-        regionOnly: true,
-      });
-      overlay?.showRegionResult(region, res.error ? `⚠ ${res.error}` : res.translation || '—');
-    } catch (e) {
-      overlay?.showRegionResult(region, `⚠ ${String(e)}`);
+    const settings = await getSettings();
+    const cap = await sendToBackground<CaptureVisibleResponse>({ type: 'CAPTURE_VISIBLE' });
+    if (!cap.dataUrl) {
+      const text = `⚠ ${cap.error ?? 'capture failed'}`;
+      for (const region of pending) overlay?.showRegionResult(region, text);
+      overlay?.markRegionsIdle();
+      return;
     }
+    const shot = cap.dataUrl;
+    // Скролл на момент скриншота: кроп вычитает его из документных координат.
+    const scrollAtCapture = { x: window.scrollX, y: window.scrollY };
+
+    // Одно CAPTURE_VISIBLE на пачку: все области вырезаются из одного кадра,
+    // поэтому N выделений стоят один скриншот, а не N.
+    await runConcurrent(
+      pending,
+      settings.translateConcurrency ?? 1,
+      async (region) => {
+        // Маскирование формой выполняется на скриншоте, чтобы графический шум
+        // вокруг текста (ары фона, рамки панелей) не доходил до OCR/vision-модели.
+        const blob = await cropRegion(shot, region, scrollAtCapture);
+        const dataUrl = await blobToDataUrl(blob);
+        const res = await sendToBackground<TranslateResult>({
+          type: 'TRANSLATE_DATA_URL',
+          imageId: region.id ?? 'region',
+          dataUrl,
+          regionOnly: true,
+        });
+        const failed = Boolean(res.error);
+        if (!failed) translatedRegions.add(keyOf(region));
+        overlay?.showRegionResult(region, res.error ? `⚠ ${res.error}` : res.translation || '—');
+        if (!failed) overlay?.markRegionTranslated(region.id);
+        overlay?.markRegionsIdle();
+      },
+      (region, error) => {
+        overlay?.showRegionResult(region, `⚠ ${String(error)}`);
+        overlay?.markRegionsIdle();
+      },
+    );
+  }
+
+  /** Ключ «переведено» для области: стабильный id, иначе координаты рамки. */
+  function keyOf(region: SelectionRegion): string {
+    if (region.id) return region.id;
+    const b = region.bounds;
+    return `${region.shape}:${b.x},${b.y},${b.width},${b.height}`;
   }
 });

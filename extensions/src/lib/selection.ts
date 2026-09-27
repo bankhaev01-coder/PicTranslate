@@ -75,3 +75,15 @@ export function initialBubbleFontSize(height: number, padding = 6): number {
   const available = Math.max(14, height - padding * 2);
   return Math.max(9, Math.min(20, Math.floor(available / 2.6)));
 }
+
+/**
+ * Область в координатах документа → область во вьюпорте на момент скриншота.
+ * Скролл между выделением и Enter иначе вырезает чужой кусок (п.3):
+ * captureVisibleTab снимает видимую часть, поэтому вычитаем scroll кадра.
+ */
+export function regionToViewport(
+  bounds: Bounds,
+  scroll: { x: number; y: number },
+): Bounds {
+  return { x: bounds.x - scroll.x, y: bounds.y - scroll.y, width: bounds.width, height: bounds.height };
+}

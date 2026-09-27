@@ -10,6 +10,8 @@ export interface OcrLangMeta {
   id: string;
   label: string;
   approxMB: number;
+  /** true — пакет не качается по умолчанию (npm run vendor с TRANSLATE_VENDOR_EXTRA=1). */
+  optional?: boolean;
 }
 
 export interface VendorManifest {

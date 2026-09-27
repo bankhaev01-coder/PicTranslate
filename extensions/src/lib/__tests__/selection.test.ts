@@ -4,6 +4,7 @@ import {
   initialBubbleFontSize,
   lassoPathData,
   mapBoxToViewport,
+  regionToViewport,
 } from '../selection';
 
 describe('boundsOf', () => {
@@ -73,5 +74,18 @@ describe('initialBubbleFontSize', () => {
 
   it('never drops below the minimum for tiny bubbles', () => {
     expect(initialBubbleFontSize(1)).toBeGreaterThanOrEqual(9);
+  });
+});
+
+describe('regionToViewport', () => {
+  it('subtracts the capture-time scroll from document bounds', () => {
+    // Выделил на scroll 0, проскроллил на 300, нажал Enter — кроп берёт то же место.
+    const vp = regionToViewport({ x: 100, y: 400, width: 200, height: 120 }, { x: 0, y: 300 });
+    expect(vp).toEqual({ x: 100, y: 100, width: 200, height: 120 });
+  });
+
+  it('leaves bounds untouched when nothing scrolled', () => {
+    const vp = regionToViewport({ x: 10, y: 20, width: 30, height: 40 }, { x: 0, y: 0 });
+    expect(vp).toEqual({ x: 10, y: 20, width: 30, height: 40 });
   });
 });
