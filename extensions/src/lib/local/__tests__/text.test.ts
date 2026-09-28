@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, isMostlyCyrillic, pickPair } from '../text';
+import { chunkText, isMostlyCyrillic, joinOcrLines, normalizeMtInput, pickPair } from '../text';
 
 const AVAILABLE = ['en-ru', 'ru-en'];
 const DOWNLOADED = ['en-ru'];
@@ -95,5 +95,50 @@ describe('chunkText', () => {
 
   it('empty text → no chunks', () => {
     expect(chunkText('')).toEqual([]);
+  });
+});
+
+describe('joinOcrLines', () => {
+  it('joins wrapped lines of one phrase into a single line', () => {
+    expect(joinOcrLines('I want to\nbecome stronger')).toBe('I want to become stronger');
+  });
+
+  it('glues a hyphenated word break without the hyphen', () => {
+    expect(joinOcrLines('some-\nthing')).toBe('something');
+  });
+
+  it('merges an upper-case hyphen break too (comics are all-caps)', () => {
+    expect(joinOcrLines('well-\nKnown')).toBe('wellKnown');
+    expect(joinOcrLines('POWER-\nFUL')).toBe('POWERFUL');
+  });
+
+  it('joins CJK lines without a space', () => {
+    expect(joinOcrLines('こんにちは\n世界')).toBe('こんにちは世界');
+  });
+
+  it('handles CRLF, empty lines and uneven spacing', () => {
+    expect(joinOcrLines('  line one \r\n\r\n  line two  ')).toBe('line one line two');
+  });
+
+  it('returns a single line unchanged (trimmed)', () => {
+    expect(joinOcrLines('  Hello world  ')).toBe('Hello world');
+  });
+
+  it('returns an empty string for whitespace-only input', () => {
+    expect(joinOcrLines(' \n \n\n ')).toBe('');
+  });
+});
+
+describe('normalizeMtInput', () => {
+  it('collapses newlines into single spaces', () => {
+    expect(normalizeMtInput('first\nsecond\n\nthird')).toBe('first second third');
+  });
+
+  it('collapses runs of spaces and trims', () => {
+    expect(normalizeMtInput('  a   b  ')).toBe('a b');
+  });
+
+  it('keeps a single-line text unchanged', () => {
+    expect(normalizeMtInput('Hello world')).toBe('Hello world');
   });
 });

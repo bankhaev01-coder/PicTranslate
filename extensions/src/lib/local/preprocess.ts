@@ -84,6 +84,28 @@ export function binarizeOtsuInPlace(rgba: Uint8ClampedArray): void {
 }
 
 /**
+ * Коэффициент увеличения canvas, чтобы меньшая сторона дошла до minDimension
+ * (Tesseract хочет 30-40px на строку). 1 — увеличение не нужно; максимум ×4 —
+ * иначе время OCR растёт неограниченно. Чистая функция — юнит-тестируется.
+ */
+export function computeUpscaleFactor(width: number, height: number, minDimension: number): number {
+  if (width <= 0 || height <= 0) return 1;
+  const minSide = Math.min(width, height);
+  if (minSide >= minDimension) return 1;
+  return Math.min(4, Math.max(1.5, Math.ceil(minDimension / minSide)));
+}
+
+/**
+ * Белая рамка вокруг кропа перед OCR: LSTM точнее читает текст, не упирающийся
+ * в край кадра (при выделении рамкой так почти всегда). 3% меньшей стороны,
+ * в пределах [8, 24] px; 0 — рамка не нужна (нулевой размер). Чистая функция.
+ */
+export function computePad(width: number, height: number): number {
+  if (width <= 0 || height <= 0) return 0;
+  return Math.max(8, Math.min(24, Math.round(Math.min(width, height) * 0.03)));
+}
+
+/**
  * Увеличение разрешения canvas, если его высота или ширина меньше minSize (по умолчанию 300px),
  * чтобы Tesseract OCR получил достаточный DPI/размер символов (не менее 30-40px на строку).
  */
@@ -93,12 +115,9 @@ export function upscaleToMinTextHeight(
 ): HTMLCanvasElement {
   const w = sourceCanvas.width;
   const h = sourceCanvas.height;
-  if (w <= 0 || h <= 0) return sourceCanvas;
+  const factor = computeUpscaleFactor(w, h, minDimension);
+  if (factor <= 1) return sourceCanvas;
 
-  const minSide = Math.min(w, h);
-  if (minSide >= minDimension) return sourceCanvas;
-
-  const factor = Math.min(4, Math.max(1.5, Math.ceil(minDimension / minSide)));
   const scaledCanvas = document.createElement('canvas');
   scaledCanvas.width = Math.round(w * factor);
   scaledCanvas.height = Math.round(h * factor);
@@ -121,6 +140,42 @@ export function invertInPlace(rgba: Uint8ClampedArray): void {
     rgba[i] = 255 - rgba[i];
     rgba[i + 1] = 255 - rgba[i + 1];
     rgba[i + 2] = 255 - rgba[i + 2];
+  }
+}
+
+/**
+ * Unsharp mask (3×3 box blur) in place: усиливает края букв после апскейла
+ * мыльного мелкого текста — Tesseract реже склеивает «rn» в «m» и т.п.
+ * Предполагается grayscale; альфа-канал не затрагивается.
+ */
+export function sharpenInPlace(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  strength = 0.7,
+): void {
+  if (width <= 0 || height <= 0) return;
+  const src = new Float32Array(width * height);
+  for (let i = 0, p = 0; i < src.length; i++, p += 4) src[i] = rgba[p];
+
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.max(0, y - 1);
+    const y1 = Math.min(height - 1, y + 1);
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - 1);
+      const x1 = Math.min(width - 1, x + 1);
+      let sum = 0;
+      for (let yy = y0; yy <= y1; yy++) {
+        const row = yy * width;
+        for (let xx = x0; xx <= x1; xx++) sum += src[row + xx];
+      }
+      const blurred = sum / ((x1 - x0 + 1) * (y1 - y0 + 1));
+      const v = src[y * width + x];
+      const sharp = Math.round(v + strength * (v - blurred));
+      const clamped = sharp < 0 ? 0 : sharp > 255 ? 255 : sharp;
+      const p = (y * width + x) * 4;
+      rgba[p] = rgba[p + 1] = rgba[p + 2] = clamped;
+    }
   }
 }
 

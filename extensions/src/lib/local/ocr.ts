@@ -6,7 +6,9 @@ import {
   binarizeSauvolaInPlace,
   invertInPlace,
   normalizeContrastInPlace,
+  sharpenInPlace,
 } from './preprocess';
+import { joinOcrLines } from './text';
 
 type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
 
@@ -26,13 +28,13 @@ export interface RecognizeBestOptions {
 }
 
 /** Вариант предобработки одного прохода OCR. */
-export type OcrVariant = 'otsu' | 'contrast' | 'otsu-invert' | 'sauvola';
+export type OcrVariant = 'otsu' | 'contrast' | 'otsu-invert' | 'sauvola' | 'sharpen';
 
-/** План проходов по качеству: 1 / 2 / 4 варианта (побеждает лучший балл). */
+/** План проходов по качеству: до 1 / 3 / 5 вариантов (побеждает лучший балл). */
 const QUALITY_VARIANTS: Record<OcrQuality, readonly OcrVariant[]> = {
   fast: ['otsu'],
-  balanced: ['otsu', 'contrast'],
-  best: ['otsu', 'contrast', 'otsu-invert', 'sauvola'],
+  balanced: ['otsu', 'contrast', 'sharpen'],
+  best: ['otsu', 'contrast', 'sharpen', 'otsu-invert', 'sauvola'],
 };
 
 /** Ранний выход: уверенность ≥ порога и непустой текст — остальные проходы не нужны. */
@@ -167,6 +169,84 @@ export function _resetOcrState(): void {
   workerCoreIdx = -1;
 }
 
+/** Структурный срез данных tesseract, нужный для сборки текста и боксов. */
+export interface OcrDataSlice {
+  text?: string;
+  confidence?: number;
+  blocks?: Array<{
+    text?: string;
+    confidence?: number;
+    bbox?: { x0: number; y0: number; x1: number; y1: number };
+    paragraphs?: Array<{
+      text?: string;
+      confidence?: number;
+      bbox?: { x0: number; y0: number; x1: number; y1: number };
+    }>;
+  }>;
+}
+
+/**
+ * Собрать результат OCR из данных tesseract: тексты всех уровней проходят
+ * через `joinOcrLines`, поэтому многострочный пузырь уходит в MT единой
+ * фразой, а не набором строк («весь текст един»).
+ *
+ * `singleLine` (кроп выделенной области) — весь текст кадра в одну строку.
+ * Полный скан — каждый блок остаётся отдельной строкой (границы пузырей
+ * важны для перевода по боксам), внутри блока — тоже одна строка.
+ * Чистая функция — юнит-тестируется.
+ */
+export function assembleOcrResult(
+  data: OcrDataSlice | null | undefined,
+  minConfidence: number,
+  singleLine: boolean,
+): OcrResult {
+  const confidence = data?.confidence ?? 0;
+  const boxes: Box[] = [];
+  const blockLines: string[] = [];
+
+  for (const block of data?.blocks ?? []) {
+    const blockText = joinOcrLines(block.text ?? '');
+    if (!blockText || (block.confidence ?? 0) < minConfidence) continue;
+    blockLines.push(blockText);
+
+    if (block.paragraphs?.length) {
+      for (const para of block.paragraphs) {
+        const paraText = joinOcrLines(para.text ?? '');
+        if (!paraText || (para.confidence ?? 0) < minConfidence) continue;
+        const bbox = para.bbox;
+        if (!bbox) continue;
+        boxes.push({
+          x: bbox.x0,
+          y: bbox.y0,
+          width: bbox.x1 - bbox.x0,
+          height: bbox.y1 - bbox.y0,
+          text: paraText,
+        });
+      }
+    } else if (block.bbox) {
+      const bbox = block.bbox;
+      boxes.push({
+        x: bbox.x0,
+        y: bbox.y0,
+        width: bbox.x1 - bbox.x0,
+        height: bbox.y1 - bbox.y0,
+        text: blockText,
+      });
+    }
+  }
+
+  // Общий текст: область — одна строка; полный скан — блоки отдельными
+  // строками, если они есть (иначе — как пришло от tesseract).
+  const joined = joinOcrLines(data?.text ?? '');
+  const text = singleLine
+    ? joined || blockLines.join('\n')
+    : blockLines.length
+      ? blockLines.join('\n')
+      : joined;
+
+  return { text, boxes, confidence };
+}
+
 /** Запустить OCR на canvas/dataURL и вернуть структурированный результат (текст, боксы, confidence). */
 export async function recognizeText(
   image: HTMLCanvasElement | string,
@@ -184,50 +264,14 @@ export async function recognizeText(
       // PSM задаётся на каждый проход: regionOnly (кроп) требует SINGLE_BLOCK.
       await w.setParameters({ tessedit_pageseg_mode: psm });
       const { data } = await w.recognize(image as never, {}, { blocks: true });
-      const overallConfidence = data?.confidence ?? 0;
-      const text = (data?.text ?? '').trim();
-      const boxes: Box[] = [];
-
-      // Извлекаем блоки/параграфы/строки с достаточной уверенностью
-      if (data?.blocks?.length) {
-        for (const block of data.blocks) {
-          const blockText = (block.text ?? '').trim();
-          if (!blockText) continue;
-          if (block.confidence < minConfidence) continue;
-
-          // Если у блока есть paragraphs/lines, можно разбить на строки для более точных пузырей,
-          // либо взять сам блок, если он достаточно компактен. Возьмем параграфы/строки:
-          if (block.paragraphs?.length) {
-            for (const para of block.paragraphs) {
-              const paraText = (para.text ?? '').trim();
-              if (!paraText || para.confidence < minConfidence) continue;
-              const bbox = para.bbox;
-              boxes.push({
-                x: bbox.x0,
-                y: bbox.y0,
-                width: bbox.x1 - bbox.x0,
-                height: bbox.y1 - bbox.y0,
-                text: paraText,
-              });
-            }
-          } else {
-            const bbox = block.bbox;
-            boxes.push({
-              x: bbox.x0,
-              y: bbox.y0,
-              width: bbox.x1 - bbox.x0,
-              height: bbox.y1 - bbox.y0,
-              text: blockText,
-            });
-          }
-        }
-      }
-
-      return {
-        text,
-        boxes,
-        confidence: overallConfidence,
-      };
+      // regionOnly (PSM.SINGLE_BLOCK) — кроп области: весь текст кадра в одну
+      // строку. Полный скан — каждый блок остаётся отдельной строкой, внутри
+      // блока — тоже одна строка (см. assembleOcrResult).
+      return assembleOcrResult(
+        data as unknown as OcrDataSlice,
+        minConfidence,
+        psm === PSM.SINGLE_BLOCK,
+      );
     } catch (e) {
       if (!isSimdAbort(e) || usedIdx + 1 >= CORE_FILES.length) {
         throw new Error(`OCR [${CORE_SHORT[Math.max(0, usedIdx)]}]: ${String((e as Error)?.message ?? e)}`);
@@ -270,6 +314,10 @@ function applyVariant(canvas: HTMLCanvasElement, variant: OcrVariant): void {
       break;
     case 'sauvola':
       binarizeSauvolaInPlace(d, canvas.width, canvas.height);
+      break;
+    case 'sharpen':
+      // Резкость без бинаризации: мыльный мелкий текст после апскейла.
+      sharpenInPlace(d, canvas.width, canvas.height);
       break;
   }
   ctx.putImageData(imageData, 0, 0);

@@ -2,8 +2,10 @@
  * Кеш результатов локального перевода (Cache Storage) — расширение-сторона
  * файлового кеша бэкенда. Ключ = sha256(изображение)+языки+движок+область.
  */
-export const OCR_PIPELINE_VERSION = 'v2';
+export const OCR_PIPELINE_VERSION = 'v3';
 const CACHE_NAME = `te-local-results-${OCR_PIPELINE_VERSION}`;
+/** Общий префикс всех версий: clear сносит и устаревшие кэши пайплайна. */
+const CACHE_PREFIX = 'te-local-results-';
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 дней, зеркалит backend CACHE_TTL_SECONDS
 
 interface Stored {
@@ -53,7 +55,10 @@ export async function localCacheSet(scope: string, key: string, payload: unknown
 
 export async function localCacheClear(): Promise<void> {
   try {
-    await caches.delete(CACHE_NAME);
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter((name) => name.startsWith(CACHE_PREFIX)).map((name) => caches.delete(name)),
+    );
   } catch {
     /* не страшно */
   }

@@ -7,6 +7,7 @@
  * воркер никогда не откатывается на удалённый хост моделей.
  */
 import { env, pipeline } from '@huggingface/transformers';
+import { normalizeMtInput } from './text';
 
 type TranslateFn = (text: string) => Promise<string>;
 
@@ -73,7 +74,9 @@ async function doInit(msg: WorkerIn): Promise<void> {
   >;
 
   translateFn = async (text: string) => {
-    const out = await pipe(text, { max_new_tokens: 480, truncation: true });
+    // Гарантия «одна строка» на входе модели: перенос строки — не смысловая
+    // граница OCR-текста; осмысленная склейка фразы — в joinOcrLines.
+    const out = await pipe(normalizeMtInput(text), { max_new_tokens: 480, truncation: true });
     return out?.[0]?.translation_text ?? '';
   };
   readyModel = model;

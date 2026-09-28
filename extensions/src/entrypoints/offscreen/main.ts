@@ -9,8 +9,8 @@ import i18n, { initI18n } from '@/lib/i18n';
 import { browser } from 'wxt/browser';
 import { getVendorManifest } from '@/lib/local/vendor';
 import { localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
-import { grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
-import { chunkText, isMostlyCyrillic, pickPair } from '@/lib/local/text';
+import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
+import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
@@ -76,10 +76,18 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Целевая меньшая сторона канвы перед OCR по качеству (fast/balanced/best):
+ * мелкий текст манги читается заметно лучше после ×2–×4. */
+const OCR_UPSCALE_MIN: Record<LocalEngineSettings['ocrQuality'], number> = {
+  fast: 300,
+  balanced: 500,
+  best: 800,
+};
+
 /**
- * Декод → апскейл при малом размере → оттенки серого → многопроходный OCR.
- * Варианты предобработки и режимы сегментации подбирает recognizeBest по
- * качеству OCR из настроек (fast/balanced/best).
+ * Декод → апскейл при малом размере → белая рамка → оттенки серого →
+ * многопроходный OCR. Варианты предобработки и режимы сегментации подбирает
+ * recognizeBest по качеству OCR из настроек (fast/balanced/best).
  */
 async function ocrFromDataUrl(
   dataUrl: string,
@@ -96,10 +104,28 @@ async function ocrFromDataUrl(
   if (!ctx) return { text: '', boxes: [], confidence: 0 };
   ctx.drawImage(img, 0, 0);
 
-  // Апскейл, если размер canvas слишком мал для надежного чтения текста
+  // Апскейл, если размер canvas слишком мал для надежного чтения текста.
   const origW = canvas.width;
-  canvas = upscaleToMinTextHeight(canvas, 300);
+  const minSide = OCR_UPSCALE_MIN[settings.ocrQuality ?? 'balanced'] ?? 300;
+  canvas = upscaleToMinTextHeight(canvas, minSide);
   const scaleRatio = canvas.width / origW;
+
+  // Белая рамка по краям: LSTM точнее читает текст, не упирающийся в край
+  // кропа (при выделении рамкой так почти всегда). Координаты боксов потом
+  // сдвигаются обратно на pad.
+  const pad = computePad(canvas.width, canvas.height);
+  if (pad > 0) {
+    const padded = document.createElement('canvas');
+    padded.width = canvas.width + pad * 2;
+    padded.height = canvas.height + pad * 2;
+    const pctx = padded.getContext('2d');
+    if (pctx) {
+      pctx.fillStyle = '#ffffff';
+      pctx.fillRect(0, 0, padded.width, padded.height);
+      pctx.drawImage(canvas, pad, pad);
+      canvas = padded;
+    }
+  }
 
   const ctx2 = canvas.getContext('2d');
   if (!ctx2) return { text: '', boxes: [], confidence: 0 };
@@ -115,12 +141,13 @@ async function ocrFromDataUrl(
     regionOnly,
   });
 
-  // Если canvas был смасштабирован, возвращаем координаты боксов в исходный масштаб изображения
-  if (scaleRatio !== 1 && res.boxes.length) {
+  // Боксы возвращаем в исходный масштаб изображения: сначала снимаем рамку,
+  // затем — апскейл.
+  if (res.boxes.length && (scaleRatio !== 1 || pad > 0)) {
     res.boxes = res.boxes.map((b) => ({
       ...b,
-      x: Math.round(b.x / scaleRatio),
-      y: Math.round(b.y / scaleRatio),
+      x: Math.max(0, Math.round((b.x - pad) / scaleRatio)),
+      y: Math.max(0, Math.round((b.y - pad) / scaleRatio)),
       width: Math.round(b.width / scaleRatio),
       height: Math.round(b.height / scaleRatio),
     }));
@@ -182,13 +209,14 @@ async function localPipeline(
       if (!native.ok) {
         return fail(`Native OCR: ${native.error ?? 'host did not respond'}`);
       }
-      sourceText = (native.source_text ?? '').trim();
+      sourceText = joinOcrLines(native.source_text ?? '');
       detectedBoxes = (native.boxes ?? []).map((b) => ({
         x: b.x,
         y: b.y,
         width: b.width,
         height: b.height,
-        text: b.text,
+        // Многострочный бокс уходит в MT одной строкой (как на tesseract-пути).
+        text: joinOcrLines(b.text ?? ''),
       }));
     } else {
       const ocrRes = await ocrFromDataUrl(dataUrl, langs, vendor, settings, regionOnly);

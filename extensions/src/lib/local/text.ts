@@ -17,6 +17,74 @@ export function isMostlyCyrillic(text: string): boolean {
   return cyr / letters >= 0.4;
 }
 
+/** CJK-символы (кана/кандзи/хангыль): в тексте пишутся без пробелов. */
+function isCjkChar(ch: string): boolean {
+  const code = ch.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x3040 && code <= 0x30ff) || // хирагана и катакана
+    (code >= 0x3400 && code <= 0x9fff) || // CJK unified + extension A
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility
+    (code >= 0xac00 && code <= 0xd7af) || // хангыль (слоги)
+    (code >= 0xff66 && code <= 0xff9d) // полуширинная катакана
+  );
+}
+
+/** Латинская буква (любой регистр) — для стыка переносов. */
+function isLatinLetter(ch: string): boolean {
+  return ch.length > 0 && /[a-zA-Z]/.test(ch);
+}
+
+/**
+ * Склеить многострочный OCR-текст в одну строку: перенос строки у Tesseract —
+ * не смысловая граница, перевод должен уходить единой фразой («весь текст
+ * един, даже если он на разных строках»).
+ *
+ * Правила стыка строк:
+ *  - дефисный перенос строки (`some-` + `thing`, `POWER-` + `FUL`) — без дефиса
+ *    и без пробела: в комиксах весь текст капсом, а дефис в конце строки почти
+ *    всегда перенос, а не составное слово;
+ *  - CJK-строки (японский/китайский/корейский) — вплотную, без пробела;
+ *  - остальные случаи — один пробел.
+ * Пустые строки выбрасываются. Чистая функция — юнит-тестируется.
+ */
+export function joinOcrLines(text: string): string {
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let out = '';
+  for (const line of lines) {
+    if (!out) {
+      out = line;
+      continue;
+    }
+    const last = out[out.length - 1] ?? '';
+    const first = line[0] ?? '';
+    if (last === '-' && isLatinLetter(first)) {
+      out = out.slice(0, -1) + line; // перенос слова: дефис не нужен
+    } else if (isCjkChar(last) && isCjkChar(first)) {
+      out += line; // CJK пишутся вплотную
+    } else {
+      out += ` ${line}`;
+    }
+  }
+  return out;
+}
+
+/**
+ * Гарантия «одна строка» на входе модели перевода: переносы из полного скана
+ * или native host становятся пробелами. Осмысленная склейка (дефисы, CJK) —
+ * в joinOcrLines. Чистая функция — юнит-тестируется.
+ */
+export function normalizeMtInput(text: string): string {
+  return text
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
 export interface PickPairInput {
   sourceLang: string; // 'auto' | 'en' | 'ru' | ...
   targetLang: string;

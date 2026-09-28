@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   binarizeOtsuInPlace,
   binarizeSauvolaInPlace,
+  computePad,
+  computeUpscaleFactor,
   grayscaleInPlace,
   invertInPlace,
   normalizeContrastInPlace,
+  sharpenInPlace,
   upscaleToMinTextHeight,
 } from '../preprocess';
 
@@ -155,6 +158,75 @@ describe('binarizeSauvolaInPlace', () => {
   it('handles zero-size buffers safely', () => {
     const rgba = new Uint8ClampedArray([]);
     binarizeSauvolaInPlace(rgba, 0, 0);
+    expect(rgba.length).toBe(0);
+  });
+});
+
+describe('computeUpscaleFactor', () => {
+  it('returns 1 when the smaller side already reaches the target', () => {
+    expect(computeUpscaleFactor(500, 400, 300)).toBe(1);
+  });
+
+  it('returns 1 for zero-size canvases', () => {
+    expect(computeUpscaleFactor(0, 0, 300)).toBe(1);
+  });
+
+  it('scales small crops up to the target size', () => {
+    expect(computeUpscaleFactor(240, 160, 300)).toBe(2); // ceil(300 / 160) = 2
+  });
+
+  it('caps the factor at ×4', () => {
+    expect(computeUpscaleFactor(50, 40, 800)).toBe(4); // ceil(800 / 40) = 20 → кап
+  });
+});
+
+describe('computePad', () => {
+  it('returns the 8px minimum for small crops', () => {
+    expect(computePad(160, 120)).toBe(8); // 3% от 120 ≈ 4 → минимум 8
+  });
+
+  it('uses 3% of the smaller side in between', () => {
+    expect(computePad(600, 500)).toBe(15);
+  });
+
+  it('caps the pad at 24px for large crops', () => {
+    expect(computePad(2000, 1000)).toBe(24); // 3% от 1000 = 30 → кап 24
+  });
+
+  it('returns 0 for zero-size canvases', () => {
+    expect(computePad(0, 0)).toBe(0);
+  });
+});
+
+describe('sharpenInPlace', () => {
+  it('leaves a flat field unchanged (blur equals the value)', () => {
+    const rgba = new Uint8ClampedArray(4 * 4 * 4).fill(100);
+    for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    sharpenInPlace(rgba, 4, 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      expect(rgba[i]).toBe(100);
+      expect(rgba[i + 3]).toBe(255);
+    }
+  });
+
+  it('amplifies the center of a bright spot (unsharp mask)', () => {
+    const w = 3;
+    const h = 3;
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const v = i === 4 ? 200 : 100; // центр ярче фона
+      rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = v;
+      rgba[i * 4 + 3] = 255;
+    }
+    sharpenInPlace(rgba, w, h);
+    expect(rgba[4 * 4]).toBeGreaterThan(200); // центр стал контрастнее
+    expect(rgba[0]).toBeLessThanOrEqual(100); // ровный фон не раздувается
+    expect(rgba[3]).toBe(255); // альфа не тронута
+  });
+
+  it('handles zero-size buffers safely', () => {
+    const rgba = new Uint8ClampedArray([]);
+    sharpenInPlace(rgba, 0, 0);
     expect(rgba.length).toBe(0);
   });
 });

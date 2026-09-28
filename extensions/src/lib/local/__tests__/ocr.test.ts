@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickBestOcr, scoreOcrResult, type OcrResult } from '../ocr';
+import { assembleOcrResult, pickBestOcr, scoreOcrResult, type OcrResult } from '../ocr';
 
 const res = (text: string, confidence: number): OcrResult => ({
   text,
@@ -41,5 +41,63 @@ describe('pickBestOcr', () => {
   it('returns the single candidate when it is the only one', () => {
     const only = res('Hello', 60);
     expect(pickBestOcr([only])).toBe(only);
+  });
+});
+
+describe('assembleOcrResult', () => {
+  const bbox = (x0: number, y0: number, x1: number, y1: number) => ({ x0, y0, x1, y1 });
+
+  const data = {
+    text: 'Hello\nthere\n\nSecond block',
+    confidence: 88,
+    blocks: [
+      {
+        text: 'Hello\nthere',
+        confidence: 88,
+        bbox: bbox(0, 0, 100, 50),
+        paragraphs: [{ text: 'Hello\nthere', confidence: 88, bbox: bbox(0, 0, 100, 50) }],
+      },
+      { text: 'Second block', confidence: 70, bbox: bbox(0, 60, 90, 80) },
+    ],
+  };
+
+  it('glues a multi-line paragraph into one string (box and overall text)', () => {
+    const out = assembleOcrResult(data, 40, false);
+    expect(out.confidence).toBe(88);
+    expect(out.boxes[0].text).toBe('Hello there');
+    // Полный скан: каждый блок — своя строка, внутри блока текст склеен.
+    expect(out.text).toBe('Hello there\nSecond block');
+  });
+
+  it('merges all blocks into a single line in region mode', () => {
+    const out = assembleOcrResult(data, 40, true);
+    expect(out.text).toBe('Hello there Second block');
+  });
+
+  it('falls back to the block bbox when paragraphs are missing', () => {
+    const out = assembleOcrResult(data, 40, false);
+    expect(out.boxes).toHaveLength(2);
+    expect(out.boxes[1]).toEqual({
+      x: 0,
+      y: 60,
+      width: 90,
+      height: 20,
+      text: 'Second block',
+    });
+  });
+
+  it('drops blocks and paragraphs below minConfidence', () => {
+    const out = assembleOcrResult(data, 80, false);
+    expect(out.boxes).toHaveLength(1);
+    expect(out.text).toBe('Hello there');
+  });
+
+  it('handles empty data safely', () => {
+    expect(assembleOcrResult(undefined, 40, false)).toEqual({
+      text: '',
+      boxes: [],
+      confidence: 0,
+    });
+    expect(assembleOcrResult({}, 40, true)).toEqual({ text: '', boxes: [], confidence: 0 });
   });
 });

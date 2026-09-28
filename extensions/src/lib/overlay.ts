@@ -105,7 +105,13 @@ export class OverlayUI {
     this.positionRegionPlates();
   };
 
-  constructor(cb: OverlayCallbacks, bubbleShape: BubbleShape = 'oval') {
+  /**
+   * initialToken — текущее поколение выделения из injected (batchToken).
+   * Области штампуются им и сверяются в injected при показе результата; без
+   * синхронизации результаты перевода дропаются как устаревшие (регрессия E2E).
+   */
+  constructor(cb: OverlayCallbacks, bubbleShape: BubbleShape = 'oval', initialToken = 0) {
+    this.regionToken = initialToken;
     this.cb = cb;
     this.bubbleShape = bubbleShape;
     this.host = document.createElement('div');

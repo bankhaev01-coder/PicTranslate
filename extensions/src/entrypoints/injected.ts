@@ -76,7 +76,10 @@ export default defineUnlistedScript(() => {
     overlay = new OverlayUI(
       {
         onTranslate: (imgs) => void translateAll(imgs),
-        onRegionsSelected: (regions) => void translateRegions(regions),
+        // Промис возвращаем в overlay: он держит регион-кнопку заблокированной до
+        // конца всей пачки. С `void` finally срабатывает сразу — второй Enter во
+        // время полёта запускал дублирующий capture+OCR+MT (регрессия E2E).
+        onRegionsSelected: (regions) => translateRegions(regions),
         onRemoveImage: (id) => {
           // Уже переведённая картинка больше не участвует в прогрессе.
           removed.add(id);
@@ -91,6 +94,9 @@ export default defineUnlistedScript(() => {
         onClose: () => closeOverlay(),
       },
       settings.bubbleShape,
+      // Текущее поколение из injected: области штампуются batchToken, иначе
+      // результаты пачки дропаются в translateRegions как устаревшие (E2E-регрессия).
+      batchToken,
     );
     overlay.setImages(images);
     return images;
