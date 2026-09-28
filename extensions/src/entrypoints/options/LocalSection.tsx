@@ -158,6 +158,32 @@ export default function LocalSection({ settings, patch }: Props) {
       </div>
 
       <div className="field">
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.cloudOcr ?? false}
+            onChange={(e) => patch({ cloudOcr: e.target.checked })}
+          />
+          {t('options.cloudOcr')}
+        </label>
+        <div className="hint">{t('options.cloudOcrHint')}</div>
+      </div>
+
+      {settings.cloudOcr && (
+        <div className="field">
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings.cloudTranslate ?? false}
+              onChange={(e) => patch({ cloudTranslate: e.target.checked })}
+            />
+            {t('options.cloudTranslate')}
+          </label>
+          <div className="hint">{t('options.cloudTranslateHint')}</div>
+        </div>
+      )}
+
+      <div className="field">
         <label htmlFor="externalMt">{t('options.externalMt')}</label>
         <select
           id="externalMt"

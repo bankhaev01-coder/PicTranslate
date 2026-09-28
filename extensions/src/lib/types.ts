@@ -90,6 +90,14 @@ export interface Settings {
   minImageSize: number;
   /** Автозапуск сканирования при загрузке страницы */
   autoScan: boolean;
+  /**
+   * Облачное OCR выделенной области через backenster parseImage (способ
+   * uLanguage): кроп уходит на сторонний сервер; при ошибке — локальный
+   * Tesseract. Сканирование всей страницы всегда локальное (нужны bbox).
+   */
+  cloudOcr: boolean;
+  /** Переводить тем же серверным запросом (иначе текст идёт в свой MT-движок). */
+  cloudTranslate: boolean;
 }
 
 /**
@@ -109,6 +117,8 @@ export type LocalEngineSettings = Pick<
   | 'externalMt'
   | 'externalMtPriority'
   | 'ocrMinConfidence'
+  | 'cloudOcr'
+  | 'cloudTranslate'
 >;
 
 export interface PageImage {

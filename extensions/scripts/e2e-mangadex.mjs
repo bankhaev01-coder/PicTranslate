@@ -17,7 +17,9 @@
 //       { "regions": [{ "x1": 0, "y1": 0, "x2": 0, "y2": 0 }] };
 //     – env-ручки отладки: E2E_PAGE_START=N — открыть главу сразу на странице N
 //       (обложка = стр. 1, контентные страницы с английскими пузырями — дальше),
-//       E2E_NO_ENTER=1 — dry-run: набрать области и остановиться до перевода.
+//       E2E_NO_ENTER=1 — dry-run: набрать области и остановиться до перевода,
+//       E2E_CLOUD=ocr|full — включить облачный OCR выделенных областей
+//       (backenster parseImage, способ uLanguage); 'full' — и серверный перевод.
 // Артефакты: %TEMP%\ext-e2e\out\ (run.log, скриншоты, result.json).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,10 +46,35 @@ const log = (...a) => {
 const save = (name, data) =>
   fs.writeFileSync(path.join(OUT, name), typeof data === 'string' ? data : JSON.stringify(data, null, 2));
 
-/* Каталог расширения для --load-extension: первый запуск копирует dist. */
-if (!fs.existsSync(path.join(EXT, 'manifest.json'))) {
+/* Каталог расширения для --load-extension: копируется из dist при первом
+ * запуске и обновляется при рассинхроне (иначе E2E молча гоняет старую сборку). */
+function distStamp() {
+  const stampOf = (root) => {
+    try {
+      const mf = fs.readFileSync(path.join(root, 'manifest.json'), 'utf8');
+      const html = fs.readFileSync(path.join(root, 'offscreen.html'), 'utf8');
+      return `${mf.length}:${html.length}:${html.slice(0, 400)}`;
+    } catch {
+      return 'missing';
+    }
+  };
+  return stampOf(DIST);
+}
+const EXT_STAMP_FILE = path.join(TMP, 'ext.stamp');
+const curStamp = distStamp();
+let savedStamp = '';
+try {
+  savedStamp = fs.readFileSync(EXT_STAMP_FILE, 'utf8');
+} catch {
+  /* первого запуска ещё не было */
+}
+if (!fs.existsSync(path.join(EXT, 'manifest.json')) || savedStamp !== curStamp) {
   log('копирую dist →', EXT);
+  fs.rmSync(EXT, { recursive: true, force: true });
   fs.cpSync(DIST, EXT, { recursive: true });
+  fs.writeFileSync(EXT_STAMP_FILE, curStamp);
+} else {
+  log('тестовая копия актуальна, копирование пропущено');
 }
 
 /* ── тестовая копия манифеста: <all_urls> вместо activeTab-жеста ──
@@ -207,14 +234,14 @@ try {
   /* 3. настройки: офлайновый конвейер, EN→RU */
   const opt = await ctx.newPage();
   await opt.goto(`chrome-extension://${extId}/options.html`, { waitUntil: 'domcontentloaded' });
-  const applied = await opt.evaluate(async (quality) => {
+  const applied = await opt.evaluate(async ({ quality, cloud }) => {
     const key = 'translateExt.settings';
     const cur = (await chrome.storage.local.get(key))[key] ?? {};
-    const next = { ...cur, engine: 'local', uiLang: 'en', targetLang: 'ru', sourceLang: 'auto', ocrLangs: ['eng'], ocrQuality: 'balanced', mtPair: 'en-ru', externalMt: 'off', useNativeHost: false, translateConcurrency: 1, bubbleShape: 'oval', minImageSize: 96, ocrMinConfidence: 40, ...(quality ? { ocrQuality: quality } : {}) };
+    const next = { ...cur, engine: 'local', uiLang: 'en', targetLang: 'ru', sourceLang: 'auto', ocrLangs: ['eng'], ocrQuality: 'balanced', mtPair: 'en-ru', externalMt: 'off', useNativeHost: false, translateConcurrency: 1, bubbleShape: 'oval', minImageSize: 96, ocrMinConfidence: 40, cloudOcr: cloud === 'ocr' || cloud === 'full', cloudTranslate: cloud === 'full', ...(quality ? { ocrQuality: quality } : {}) };
     await chrome.storage.local.set({ [key]: next });
     return next;
-  }, process.env.E2E_QUALITY ?? '');
-  log('settings:', JSON.stringify({ engine: applied.engine, ocrLangs: applied.ocrLangs, mtPair: applied.mtPair, ext: applied.externalMt }));
+  }, { quality: process.env.E2E_QUALITY ?? '', cloud: process.env.E2E_CLOUD ?? '' });
+  log('settings:', JSON.stringify({ engine: applied.engine, ocrLangs: applied.ocrLangs, mtPair: applied.mtPair, ext: applied.externalMt, cloudOcr: applied.cloudOcr, cloudTranslate: applied.cloudTranslate }));
 
   /* 4. прод-путь: SCAN_TAB → background → executeScript → SCAN_IMAGES */
   const tScan = Date.now();

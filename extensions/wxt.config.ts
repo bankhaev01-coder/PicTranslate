@@ -34,6 +34,8 @@ export default defineConfig({
       // Внешние переводчики автономного движка (только при включённом externalMt)
       'https://translate.googleapis.com/*',
       'https://translate.yandex.net/*',
+      // Облачный OCR выделенной области (uLanguage/backenster parseImage)
+      'https://backenster.com/*',
       // Локальный/self-hosted backend (офлайн-режим).
       'http://localhost/*',
       'http://127.0.0.1/*',

@@ -14,6 +14,7 @@ import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
+import { parseImageOcr } from '@/lib/local/parseImage';
 import { sendNativeMessage } from '@/lib/native/nativeClient';
 import { MtClient } from '@/lib/local/mtClient';
 import type { Box, LocalEngineSettings, Msg, TranslateResult } from '@/lib/types';
@@ -170,7 +171,10 @@ async function localPipeline(
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   const hash = await sha256Hex(bytes);
   const scope = regionOnly ? 'reg' : 'full';
-  const cacheId = `${settings.targetLang}:${settings.sourceLang}:${settings.ocrLangs.join('+')}:${hash}`;
+  // Облачный и локальный результаты кешируем раздельно: переключение настроек
+  // не должно отдавать чужой кеш (старые локальные записи не затираются).
+  const cloudTag = regionOnly && settings.cloudOcr ? (settings.cloudTranslate ? ':cloudTr' : ':cloud') : '';
+  const cacheId = `${settings.targetLang}:${settings.sourceLang}:${settings.ocrLangs.join('+')}${cloudTag}:${hash}`;
 
   const cached = await localCacheGet<TranslateResult>(scope, cacheId);
   if (cached) return cached;
@@ -183,48 +187,76 @@ async function localPipeline(
     error,
   });
 
+  // 1) Облачный OCR выделенной области — способ uLanguage (backenster
+  //    parseImage): сервер отдаёт строки без bbox, поэтому только regionOnly.
+  //    При cloudTranslate сервер возвращает готовый перевод — возвращаем его
+  //    сразу; иначе распознанный текст идёт в обычный MT-путь ниже.
+  //    Любая ошибка (сеть, ключ, блокировка) молча уводит на локальный путь.
+  let sourceText = '';
+  let detectedBoxes: Box[] = [];
+  if (regionOnly && settings.cloudOcr) {
+    try {
+      const cloud = await parseImageOcr(dataUrl, settings.sourceLang, settings.targetLang);
+      sourceText = cloud.sourceText;
+      if (settings.cloudTranslate && cloud.translatedText) {
+        const cloudResult: TranslateResult = {
+          source_text: cloud.sourceText,
+          translation: cloud.translatedText,
+          model: 'cloud:parseImage',
+          detected_language: isMostlyCyrillic(cloud.sourceText) ? 'ru' : 'en',
+          latency_ms: elapsed(),
+        };
+        await localCacheSet(scope, cacheId, cloudResult);
+        return cloudResult;
+      }
+    } catch (e) {
+      console.warn('[offscreen] cloud OCR failed, local fallback:', e);
+    }
+  }
+
   const hasTesseractPack = Boolean(vendor?.tesseract && vendor.baseUrl);
   // Native host может заменять вендор-пак tesseract-воркера.
-  if (!hasTesseractPack && !settings.useNativeHost) {
+  // Tesseract-пак не нужен, если текст уже пришёл из облака (без cloudTranslate).
+  if (!sourceText && !hasTesseractPack && !settings.useNativeHost) {
     return fail('offline asset pack is missing: run npm run vendor and rebuild the extension');
   }
   if (!vendor?.pairs.length) {
     return fail('offline translation model pack is missing: run npm run vendor and rebuild the extension');
   }
 
-  // 1) OCR — либо встроенный tesseract-воркер, либо native host.
-  let sourceText = '';
-  let detectedBoxes: Box[] = [];
+  // 1.1) OCR (если текст не пришёл из облака) — либо встроенный tesseract-воркер, либо native host.
   const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
   // Языковые пакеты, которых нет в офлайн-сборке, отбрасываем: иначе tesseract
   // упадёт на 404 вместо понятной ошибки.
   const bundledLangs = vendor?.ocrLangs ? new Set(vendor.ocrLangs) : null;
   const langs = bundledLangs ? requestedLangs.filter((l) => bundledLangs.has(l)) : requestedLangs;
-  if (!langs.length && !settings.useNativeHost) {
-    return fail(i18n.t('local.errOcrLangMissing', { langs: requestedLangs.join(', ') }));
-  }
-  try {
-    if (settings.useNativeHost) {
-      const native = await sendNativeMessage({ action: 'ocr', image_base64: dataUrl, langs });
-      if (!native.ok) {
-        return fail(`Native OCR: ${native.error ?? 'host did not respond'}`);
-      }
-      sourceText = joinOcrLines(native.source_text ?? '');
-      detectedBoxes = (native.boxes ?? []).map((b) => ({
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        // Многострочный бокс уходит в MT одной строкой (как на tesseract-пути).
-        text: joinOcrLines(b.text ?? ''),
-      }));
-    } else {
-      const ocrRes = await ocrFromDataUrl(dataUrl, langs, vendor, settings, regionOnly);
-      sourceText = ocrRes.text;
-      detectedBoxes = ocrRes.boxes;
+  if (!sourceText) {
+    if (!langs.length && !settings.useNativeHost) {
+      return fail(i18n.t('local.errOcrLangMissing', { langs: requestedLangs.join(', ') }));
     }
-  } catch (e) {
-    return fail(`OCR: ${String(e)}`);
+    try {
+      if (settings.useNativeHost) {
+        const native = await sendNativeMessage({ action: 'ocr', image_base64: dataUrl, langs });
+        if (!native.ok) {
+          return fail(`Native OCR: ${native.error ?? 'host did not respond'}`);
+        }
+        sourceText = joinOcrLines(native.source_text ?? '');
+        detectedBoxes = (native.boxes ?? []).map((b) => ({
+          x: b.x,
+          y: b.y,
+          width: b.width,
+          height: b.height,
+          // Многострочный бокс уходит в MT одной строкой (как на tesseract-пути).
+          text: joinOcrLines(b.text ?? ''),
+        }));
+      } else {
+        const ocrRes = await ocrFromDataUrl(dataUrl, langs, vendor, settings, regionOnly);
+        sourceText = ocrRes.text;
+        detectedBoxes = ocrRes.boxes;
+      }
+    } catch (e) {
+      return fail(`OCR: ${String(e)}`);
+    }
   }
   if (!sourceText) {
     return { source_text: '', translation: '', model: 'local', boxes: [], latency_ms: elapsed() };

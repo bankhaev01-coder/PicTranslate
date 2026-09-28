@@ -154,6 +154,8 @@ async function translateByEngine(
       externalMt: settings.externalMt,
       externalMtPriority: settings.externalMtPriority,
       ocrMinConfidence: settings.ocrMinConfidence ?? 40,
+      cloudOcr: settings.cloudOcr,
+      cloudTranslate: settings.cloudTranslate,
     },
   } satisfies Msg);
 }

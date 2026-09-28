@@ -37,6 +37,10 @@ export const DEFAULT_SETTINGS: Settings = {
   uiLang: 'auto',
   minImageSize: 96,
   autoScan: false,
+  // Облачный OCR выделенной области (uLanguage/backenster) выключен по
+  // умолчанию: изображение уходит на сторонний сервер только по согласию.
+  cloudOcr: false,
+  cloudTranslate: false,
 };
 
 /** Языки, предлагаемые в интерфейсе. Добавляйте при необходимости. */
