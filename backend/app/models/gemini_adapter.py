@@ -17,9 +17,10 @@ from app.models.openai_adapter import _extract_json
 log = logging.getLogger("translate-ext")
 
 
-GEMINI_PROMPT = """You are an expert OCR and translation assistant.
-Extract ALL visible text from the image verbatim.
-Then translate it into {target_lang}.
+GEMINI_PROMPT = """You are an expert manga and comic OCR and translation assistant.
+Extract ALL visible text from the image verbatim, in reading order (top to bottom, right to left for vertical Japanese manga).
+Keep sound effects (SFX) on their own lines prefixed with "SFX:".
+Then translate each text segment faithfully and naturally into {target_lang}, preserving tone.
 Return ONLY a strict JSON object (no markdown, no code fences):
 {{"source_text": "...", "translation": "...", "detected_language": "xx"}}
 """

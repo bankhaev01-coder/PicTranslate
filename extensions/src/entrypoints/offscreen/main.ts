@@ -197,7 +197,8 @@ async function localPipeline(
   if (regionOnly && settings.cloudOcr) {
     try {
       const cloud = await parseImageOcr(dataUrl, settings.sourceLang, settings.targetLang);
-      sourceText = cloud.sourceText;
+      // Строки сервера склеиваем как OCR-строки: переносы/дефисы — не границы фразы.
+      sourceText = joinOcrLines(cloud.sourceText);
       if (settings.cloudTranslate && cloud.translatedText) {
         const cloudResult: TranslateResult = {
           source_text: cloud.sourceText,

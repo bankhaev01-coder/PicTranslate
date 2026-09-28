@@ -88,6 +88,55 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return await res.blob();
 }
 
+/** Потолок эффективного DPR кропа: лишний DPR раздувает base64, OCR не выигрывает. */
+export const MAX_CAPTURE_DPR = 2;
+/** Потолок длинной стороны кропа в px: больше — пропорциональный даунскейл `high`. */
+export const MAX_CROP_SIDE = 1600;
+
+/** Геометрия кропа: вырезка в device-px исходника + целевой размер канвы. */
+export interface CropGeometry {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+  outW: number;
+  outH: number;
+  /** Фактический масштаб исходник→CSS (уже с капом DPR). */
+  effScale: number;
+}
+
+/**
+ * Чистая геометрия кропа области (без DOM/canvas — юнит-тестируется).
+ * `bitmap` — размер скриншота в device-px, `viewportBox` — область во вьюпорте
+ * (CSS px, уже через regionToViewport), `viewportSize` — размер вьюпорта CSS px.
+ * DPR режется до MAX_CAPTURE_DPR, длинная сторона — до MAX_CROP_SIDE.
+ */
+export function computeCropSize(
+  bitmap: { width: number; height: number },
+  viewportBox: { x: number; y: number; width: number; height: number },
+  viewportSize: { width: number; height: number },
+): CropGeometry {
+  const rawScale = viewportSize.width > 0 ? bitmap.width / viewportSize.width : 1;
+  const effScale = Math.min(Math.max(rawScale, 1), MAX_CAPTURE_DPR);
+  const b = viewportBox;
+  const sx = Math.max(0, Math.round(b.x * effScale));
+  const sy = Math.max(0, Math.round(b.y * effScale));
+  const sw = Math.max(1, Math.min(bitmap.width - sx, Math.round(b.width * effScale)));
+  const sh = Math.max(1, Math.min(bitmap.height - sy, Math.round(b.height * effScale)));
+  const longSide = Math.max(sw, sh);
+  const fit = longSide > MAX_CROP_SIDE ? MAX_CROP_SIDE / longSide : 1;
+  return {
+    sx,
+    sy,
+    sw,
+    sh,
+    outW: Math.max(1, Math.round(sw * fit)),
+    outH: Math.max(1, Math.round(sh * fit)),
+    effScale,
+  };
+}
+
+
 /**
  * Обрезать скриншот И замаскировать его формой выделения.
  *
@@ -104,49 +153,50 @@ export async function cropRegion(
   scrollAtCapture: { x: number; y: number } = { x: 0, y: 0 },
 ): Promise<Blob> {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  const scale = bitmap.width / window.innerWidth;
-  const viewport = regionToViewport(region.bounds, scrollAtCapture, {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  });
-  const b = viewport;
-
-  const sx = Math.max(0, Math.round(b.x * scale));
-  const sy = Math.max(0, Math.round(b.y * scale));
-  const sw = Math.max(1, Math.min(bitmap.width - sx, Math.round(b.width * scale)));
-  const sh = Math.max(1, Math.min(bitmap.height - sy, Math.round(b.height * scale)));
+  const viewportSize = { width: window.innerWidth, height: window.innerHeight };
+  const viewport = regionToViewport(region.bounds, scrollAtCapture, viewportSize);
+  const geom = computeCropSize(
+    { width: bitmap.width, height: bitmap.height },
+    viewport,
+    viewportSize,
+  );
+  const { sx, sy, sw, sh, outW, outH } = geom;
+  // Исходник -> канва: 1, когда кап длинной стороны не сработал.
+  const fit = sw > 0 ? outW / sw : 1;
 
   const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
+  canvas.width = outW;
+  canvas.height = outH;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('no 2d context');
 
   // Белая подложка: прозрачные пиксели PNG не путают vision-модели.
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, sw, sh);
+  ctx.fillRect(0, 0, outW, outH);
 
-  // CSS-пиксели вьюпорта -> локальные device-пиксели канвы.
-  // Точки лассо хранятся в документных — приводим к вьюпорту кадра.
+  // CSS-пиксели вьюпорта -> локальные пиксели канвы: точки лассо хранятся
+  // в документных, поэтому приводим к вьюпорту кадра, затем к вырезке и fit.
   const local = (p: Point): Point => ({
-    x: (p.x - scrollAtCapture.x) * scale - sx,
-    y: (p.y - scrollAtCapture.y) * scale - sy,
+    x: ((p.x - scrollAtCapture.x) * geom.effScale - sx) * fit,
+    y: ((p.y - scrollAtCapture.y) * geom.effScale - sy) * fit,
   });
 
   ctx.save();
   ctx.beginPath();
   if (region.shape === 'oval') {
-    ctx.ellipse(sw / 2, sh / 2, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(outW / 2, outH / 2, outW / 2, outH / 2, 0, 0, Math.PI * 2);
   } else if (region.shape === 'lasso' && region.points && region.points.length > 2) {
     const pts = region.points.map(local);
     ctx.moveTo(pts[0].x, pts[0].y);
     for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
     ctx.closePath();
   } else {
-    ctx.rect(0, 0, sw, sh);
+    ctx.rect(0, 0, outW, outH);
   }
   ctx.clip();
-  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, outW, outH);
   ctx.restore();
 
   return await new Promise<Blob>((resolve, reject) =>

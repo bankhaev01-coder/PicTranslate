@@ -16,9 +16,11 @@ from app.schemas.translate import TranslateRequest, TranslateResult
 log = logging.getLogger("translate-ext")
 
 
-TRANSLATE_IMAGE_PROMPT = """You are an expert OCR and translation assistant.
-Analyze the image carefully. Extract ALL visible text verbatim.
-Then translate that text into {target_lang}.
+TRANSLATE_IMAGE_PROMPT = """You are an expert manga and comic OCR and translation assistant.
+Analyze the image carefully. It is a cropped region of a comic page or manga panel.
+Extract ALL visible text verbatim, in reading order (top to bottom, right to left for vertical Japanese manga).
+Keep sound effects (SFX) on their own lines prefixed with "SFX:".
+Then translate each text segment faithfully and naturally into {target_lang}, preserving tone.
 Return your answer STRICTLY as a JSON object (no markdown, no code fences):
 {{"source_text": "...", "translation": "...", "detected_language": "xx"}}
 Rules:
