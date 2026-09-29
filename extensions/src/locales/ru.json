@@ -28,6 +28,7 @@
   },
   "overlay": {
     "panelTitle": "Изображения на странице",
+    "showPanel": "Показать панель переводчика",
     "found": "Найдено: {{count}}",
     "progress": "Переведено {{done}} из {{total}}",
     "selectRegion": "Выделить область",

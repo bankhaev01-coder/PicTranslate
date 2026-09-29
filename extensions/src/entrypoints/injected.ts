@@ -62,7 +62,8 @@ export default defineUnlistedScript(() => {
       return true;
     }
     if (msg.type === 'CLEAR_OVERLAY') {
-      closeOverlay();
+      // Только скрыть панель: контуры, плашки и пузыри остаются на странице.
+      overlay?.hidePanel();
       sendResponse({ ok: true });
       return true;
     }
@@ -116,7 +117,6 @@ export default defineUnlistedScript(() => {
           regionCrops.clear();
           batchToken++;
         },
-        onClose: () => closeOverlay(),
       },
       settings.bubbleShape,
       // Текущее поколение из injected: области штампуются batchToken, иначе

@@ -28,6 +28,7 @@
   },
   "overlay": {
     "panelTitle": "Images on page",
+    "showPanel": "Show translation panel",
     "found": "Found: {{count}}",
     "progress": "Translated {{done}} of {{total}}",
     "selectRegion": "Select area",

@@ -37,7 +37,6 @@ export interface OverlayCallbacks {
   onRegionRemoved?: (regionId: string) => void;
   /** Сброшено всё выделение — сбросить флаги «переведено». */
   onRegionsCleared?: () => void;
-  onClose: () => void;
 }
 
 interface Row {
@@ -69,6 +68,8 @@ export class OverlayUI {
   private host: HTMLElement;
   private shadow: ShadowRoot;
   private panel!: HTMLElement;
+  /** Кнопка возврата скрытой панели: видна, только когда панель скрыта. */
+  private panelFab!: HTMLElement;
   private listEl!: HTMLElement;
   private progressEl!: HTMLElement;
   private rows = new Map<string, Row>();
@@ -139,8 +140,9 @@ export class OverlayUI {
 
   /**
    * Enter — перевести набранные области, Escape — сбросить выделение (области
-   * и их результаты), а если сбрасывать нечего — закрыть панель. Enter не
-   * перехватывается, когда фокус в поле ввода на странице.
+   * и их результаты), а если сбрасывать нечего — скрыть панель (плашки и
+   * пузыри остаются на странице, вернуть панель можно кнопкой-фабом). Enter
+   * не перехватывается, когда фокус в поле ввода на странице.
    */
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && this.regions.length && !isEditableTarget(e.target)) {
@@ -154,7 +156,7 @@ export class OverlayUI {
       this.stopSelection();
       return;
     }
-    this.cb.onClose();
+    this.hidePanel();
   };
 
   private render() {
@@ -183,7 +185,7 @@ export class OverlayUI {
     const btnClose = el('button', {
       class: 'btn icon',
       text: '✕',
-      onclick: () => this.cb.onClose(),
+      onclick: () => this.hidePanel(),
     });
 
     header.append(title, btnTranslate, this.btnSelect, btnLabels, btnClose);
@@ -233,8 +235,31 @@ export class OverlayUI {
     this.listEl = el('div', { class: 'list' });
 
     this.panel.append(header, shapes, selActions, this.progressEl, this.listEl);
-    this.shadow.append(style, this.panel);
+
+    // Возврат скрытой панели: ✕/Esc прячут только панель — контуры, плашки
+    // переводов и пузыри остаются, фаб возвращает панель без потери результатов.
+    this.panelFab = el('button', {
+      class: 'panel-fab',
+      text: '☰',
+      title: i18n.t('overlay.showPanel'),
+      onclick: () => this.showPanel(),
+    });
+    this.panelFab.hidden = true;
+
+    this.shadow.append(style, this.panel, this.panelFab);
     this.updateSelectionUI();
+  }
+
+  /** Скрыть только панель: результаты выделения (контуры, плашки, пузыри) живут дальше. */
+  hidePanel(): void {
+    this.panel.style.display = 'none';
+    this.panelFab.hidden = false;
+  }
+
+  /** Вернуть панель после hidePanel (кнопка-фаб или повторный скан из popup). */
+  showPanel(): void {
+    this.panel.style.display = '';
+    this.panelFab.hidden = true;
   }
 
   setImages(images: PageImage[]) {
@@ -849,6 +874,19 @@ const OVERLAY_CSS = `
   box-shadow: 0 8px 28px rgba(0,0,0,.18);
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+/* Кнопка возврата скрытой панели — на её месте, чтобы не заслонять страницу. */
+.panel-fab {
+  pointer-events: auto;
+  z-index: 3;
+  position: fixed; top: 12px; right: 12px;
+  width: 34px; height: 34px;
+  border: 1px solid #d0d0d0; border-radius: 10px;
+  background: #ffffff; color: #1a1a1a;
+  box-shadow: 0 8px 28px rgba(0,0,0,.18);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.panel-fab:hover { background: #ececec; }
+.panel-fab[hidden] { display: none; }
 /* flex-wrap обязателен: без переноса кнопки выдавливают ✕ за правый край экрана. */
 .header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid #eee; }
 .title { font-weight: 600; margin-right: auto; min-width: 0; }

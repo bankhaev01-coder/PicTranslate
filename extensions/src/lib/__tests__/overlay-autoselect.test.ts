@@ -23,7 +23,6 @@ function makeCallbacks(): OverlayCallbacks {
     onTranslate: vi.fn(),
     onRegionsSelected: vi.fn(),
     onRemoveImage: vi.fn(),
-    onClose: vi.fn(),
   };
 }
 

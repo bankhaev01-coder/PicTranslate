@@ -23,7 +23,6 @@ function makeCallbacks(onRegionsCleared = vi.fn()): OverlayCallbacks {
     onRemoveImage: vi.fn(),
     onRegionRemoved: vi.fn(),
     onRegionsCleared,
-    onClose: vi.fn(),
   };
 }
 
