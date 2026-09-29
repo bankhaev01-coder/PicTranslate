@@ -74,7 +74,13 @@ export class MtClient {
     const id = this.nextId++;
     const promise = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
     w.postMessage({ op: 'forget', id, model });
-    return promise;
+    // Воркер сбрасывает загруженную модель, поэтому снимаем и признак готовности:
+    // иначе следующий ensurePair вернёт «готово» и translate упадёт с
+    // MT_NOT_INITIALIZED до следующего явного init.
+    return promise.then((v) => {
+      if (this.readyPair === pair) this.readyPair = null;
+      return v;
+    });
   }
 
   isReady(pair: string): boolean {
