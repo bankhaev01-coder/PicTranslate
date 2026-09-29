@@ -51,8 +51,7 @@ export async function translateImage(params: TranslateParams): Promise<Translate
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try {
-        const body = await res.json();
-        detail = body?.detail ?? body?.error ?? detail;
+        detail = httpErrorDetail(await res.json(), detail);
       } catch {
         /* оставляем текст статуса HTTP */
       }
@@ -91,4 +90,28 @@ function errorResult(detail: string): TranslateResult {
     latency_ms: 0,
     error: detail,
   };
+}
+
+/**
+ * Человекочитаемая причина HTTP-ошибки бэкенда.
+ *
+ * FastAPI кладёт в `detail` строку, но на 422 (валидация) — массив объектов
+ * `{loc, msg, type}`: без сериализации в UI уходило бесполезное `[object Object]`.
+ * Пустые объект/массив и отсутствие полей дают `fallback` (обычно `HTTP <код>`).
+ * Чистая функция — юнит-тестируется.
+ */
+export function httpErrorDetail(body: unknown, fallback: string): string {
+  const record = (body ?? {}) as { detail?: unknown; error?: unknown };
+  const raw = record.detail ?? record.error;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
+  if (raw && typeof raw === 'object') {
+    try {
+      const json = JSON.stringify(raw);
+      if (json && json !== '{}' && json !== '[]') return json;
+    } catch {
+      /* циклическая ссылка в ответе — остаёмся на fallback */
+    }
+  }
+  return fallback;
 }
