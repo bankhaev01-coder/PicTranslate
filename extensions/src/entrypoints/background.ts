@@ -81,18 +81,26 @@ async function handle(
       return captureVisible(sender.tab?.windowId);
 
     case 'CAPTURE_AND_TRANSLATE': {
-      const cap = await captureVisible(sender.tab?.windowId);
-      if (!cap.dataUrl) {
-        return {
-          source_text: '',
-          translation: '',
-          model: 'n/a',
-          latency_ms: 0,
-          error: cap.error ?? 'capture failed',
-        } satisfies TranslateResult;
+      // Скрываем оверлей вкладки на время снимка: панель, контуры областей и
+      // подписи пузырей — наша разметка, в кадр она попадать не должна.
+      // Если контент-скрипт не внедрён — просто снимаем как есть.
+      if (msg.tabId != null) await setTabUiHidden(msg.tabId, true);
+      try {
+        const cap = await captureVisible(sender.tab?.windowId);
+        if (!cap.dataUrl) {
+          return {
+            source_text: '',
+            translation: '',
+            model: 'n/a',
+            latency_ms: 0,
+            error: cap.error ?? 'capture failed',
+          } satisfies TranslateResult;
+        }
+        const settings = await getSettings();
+        return translateByEngine(cap.dataUrl, settings, false);
+      } finally {
+        if (msg.tabId != null) await setTabUiHidden(msg.tabId, false);
       }
-      const settings = await getSettings();
-      return translateByEngine(cap.dataUrl, settings, false);
     }
 
     case 'CHECK_NATIVE_HOST':
@@ -191,6 +199,19 @@ async function captureVisible(windowId?: number): Promise<CaptureVisibleResponse
     return { dataUrl };
   } catch (e) {
     return { error: `captureVisibleTab failed: ${String(e)}` };
+  }
+}
+
+/**
+ * Скрыть/показать оверлей вкладки перед скриншотом. Ошибки молча игнорируются:
+ * если контент-скрипт не внедрён или вкладка закрылась, снимок просто
+ * делается с текущей разметкой.
+ */
+async function setTabUiHidden(tabId: number, hidden: boolean): Promise<void> {
+  try {
+    await browser.tabs.sendMessage(tabId, { type: 'SET_UI_HIDDEN', hidden } satisfies ContentMsg);
+  } catch {
+    /* контент-скрипт не внедрён — не страшно */
   }
 }
 

@@ -232,8 +232,9 @@ export type Msg =
   | { type: 'TRANSLATE_DATA_URL'; imageId: string; dataUrl: string; regionOnly?: boolean }
   /** → background: скриншот видимой области вкладки. Ответ: { dataUrl } */
   | { type: 'CAPTURE_VISIBLE' }
-  /** popup → background: скриншот + перевод видимой области. Ответ: TranslateResult */
-  | { type: 'CAPTURE_AND_TRANSLATE' }
+  /** popup → background: скриншот + перевод видимой области. Ответ: TranslateResult.
+   *  `tabId` (если известен) — background спрячет оверлей вкладки перед снимком. */
+  | { type: 'CAPTURE_AND_TRANSLATE'; tabId?: number }
   /** options → background: проверка native messaging хоста. Ответ: { ok, info?, error? } */
   | { type: 'CHECK_NATIVE_HOST' }
   /** offscreen → background: нативный вызов (в offscreen нет runtime.sendNativeMessage) */
@@ -248,7 +249,13 @@ export interface CaptureVisibleResponse {
  * Команды background → скрипт страницы: вкладка-адресат уже известна,
  * поэтому tabId в них не передаётся (в отличие от Msg для popup → background).
  */
-export type ContentMsg = { type: 'SCAN_IMAGES' } | { type: 'CLEAR_OVERLAY' };
+export type ContentMsg = { type: 'SCAN_IMAGES' } | { type: 'CLEAR_OVERLAY' }
+  /**
+   * Скрыть/показать нашу разметку на время captureVisibleTab: панель, контуры
+   * областей и подписи пузырей — это наш UI, в скриншот (и дальше в OCR/vision)
+   * он попадать не должен.
+   */
+  | { type: 'SET_UI_HIDDEN'; hidden: boolean };
 
 /** Ответ контент-скрипта на SCAN_IMAGES. */
 export interface ScanImagesResponse {

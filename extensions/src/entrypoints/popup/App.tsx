@@ -79,7 +79,13 @@ export default function App() {
     setShot(null);
     setNote(t('popup.screenshotHint'));
     try {
-      const res = await sendToBackground<TranslateResult>({ type: 'CAPTURE_AND_TRANSLATE' });
+      // tabId нужен background, чтобы спрятать оверлей вкладки перед скриншотом
+      // (панель/контуры не должны попадать в OCR/vision-модель).
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      const res = await sendToBackground<TranslateResult>({
+        type: 'CAPTURE_AND_TRANSLATE',
+        ...(tab?.id != null ? { tabId: tab.id } : {}),
+      });
       setShot(res);
     } finally {
       setBusy(false);

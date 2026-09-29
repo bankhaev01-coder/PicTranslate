@@ -58,6 +58,14 @@ export default defineUnlistedScript(() => {
       sendResponse({ ok: true });
       return true;
     }
+    if (msg.type === 'SET_UI_HIDDEN') {
+      overlay?.setCaptureHidden(msg.hidden);
+      // При скрытии дожидаемся перерисовки: иначе captureVisibleTab может
+      // поймать старый кадр с панелью.
+      const wait = msg.hidden ? nextPaint() : Promise.resolve();
+      void wait.then(() => sendResponse({ ok: true }));
+      return true;
+    }
     return false;
   });
 
@@ -189,6 +197,27 @@ export default defineUnlistedScript(() => {
   }
 
   /* ── выделение: один скриншот на пачку, кроп и перевод каждой области ── */
+  /** Дождаться двух кадров (fallback — 80 мс): скриншот снимается после перерисовки. */
+  function nextPaint(): Promise<void> {
+    return Promise.race([
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 80)),
+    ]);
+  }
+
+  /** Скрыть нашу разметку на время скриншота и показать обратно (finally). */
+  async function captureWithoutUi(): Promise<CaptureVisibleResponse> {
+    overlay?.setCaptureHidden(true);
+    try {
+      await nextPaint();
+      return await sendToBackground<CaptureVisibleResponse>({ type: 'CAPTURE_VISIBLE' });
+    } finally {
+      overlay?.setCaptureHidden(false);
+    }
+  }
+
   async function translateRegions(regions: SelectionRegion[]) {
     if (!regions.length) return;
     // Повторный Enter переводит только несделанное: готовые области
@@ -196,7 +225,7 @@ export default defineUnlistedScript(() => {
     const pending = regions.filter((r) => !translatedRegions.has(regionKey(r)));
     if (!pending.length) return;
     const settings = await getSettings();
-    const cap = await sendToBackground<CaptureVisibleResponse>({ type: 'CAPTURE_VISIBLE' });
+    const cap = await captureWithoutUi();
     if (!cap.dataUrl) {
       const text = `⚠ ${cap.error ?? 'capture failed'}`;
       for (const region of pending) {
