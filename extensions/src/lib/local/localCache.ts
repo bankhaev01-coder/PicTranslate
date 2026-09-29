@@ -2,7 +2,7 @@
  * Кеш результатов локального перевода (Cache Storage) — расширение-сторона
  * файлового кеша бэкенда. Ключ = sha256(изображение)+языки+движок+область.
  */
-export const OCR_PIPELINE_VERSION = 'v3';
+export const OCR_PIPELINE_VERSION = 'v4';
 const CACHE_NAME = `te-local-results-${OCR_PIPELINE_VERSION}`;
 /** Общий префикс всех версий: clear сносит и устаревшие кэши пайплайна. */
 const CACHE_PREFIX = 'te-local-results-';
@@ -22,6 +22,54 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 function requestFor(scope: string, key: string): Request {
   return new Request(`https://te.local/${scope}/${key}`);
+}
+
+/** Всё, что влияет на распознанный текст или перевод и обязано войти в ключ. */
+export interface LocalCacheKeyInput {
+  imageHash: string;
+  regionOnly: boolean;
+  sourceLang: string;
+  targetLang: string;
+  ocrLangs: string[];
+  ocrQuality: string;
+  ocrMinConfidence: number;
+  useNativeHost: boolean;
+  cloudOcr: boolean;
+  cloudTranslate: boolean;
+  externalMt: string;
+  externalMtPriority: string;
+}
+
+/**
+ * Ключ кеша результата. В ключ обязан входить каждый параметр, меняющий текст
+ * или перевод: смена провайдера внешнего MT, приоритета, качества OCR или
+ * языка не должна отдавать чужой результат из кеша. Облачный OCR относится
+ * только к кропу области (regionOnly+cloudOcr): получает свой тег `cloud`
+ * (`cloudTr`, если сервер сразу перевёл), чтобы серверный и локальный
+ * результаты не смешивались. `scope` (reg/full) разделяет кроп и полный скан.
+ *
+ * Чистая функция — юнит-тестируется.
+ */
+export function buildLocalCacheKey(input: LocalCacheKeyInput): { scope: string; cacheId: string } {
+  const cloudTag =
+    input.regionOnly && input.cloudOcr ? (input.cloudTranslate ? 'cloudTr' : 'cloud') : '';
+  const providerTag =
+    input.externalMt === 'off' ? 'off' : `${input.externalMt}:${input.externalMtPriority}`;
+  const ocrTag = `${input.ocrQuality}:${input.ocrMinConfidence}:${
+    input.useNativeHost ? 'native' : 'tesseract'
+  }`;
+  const cacheId = [
+    input.targetLang,
+    input.sourceLang,
+    input.ocrLangs.join('+'),
+    ocrTag,
+    providerTag,
+    cloudTag,
+    input.imageHash,
+  ]
+    .filter((part) => part.length > 0)
+    .join(':');
+  return { scope: input.regionOnly ? 'reg' : 'full', cacheId };
 }
 
 export async function localCacheGet<T>(scope: string, key: string): Promise<T | null> {

@@ -8,7 +8,7 @@
 import i18n, { initI18n } from '@/lib/i18n';
 import { browser } from 'wxt/browser';
 import { getVendorManifest } from '@/lib/local/vendor';
-import { localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
+import { buildLocalCacheKey, localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
 import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
 import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
@@ -170,11 +170,22 @@ async function localPipeline(
 
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   const hash = await sha256Hex(bytes);
-  const scope = regionOnly ? 'reg' : 'full';
-  // Облачный и локальный результаты кешируем раздельно: переключение настроек
-  // не должно отдавать чужой кеш (старые локальные записи не затираются).
-  const cloudTag = regionOnly && settings.cloudOcr ? (settings.cloudTranslate ? ':cloudTr' : ':cloud') : '';
-  const cacheId = `${settings.targetLang}:${settings.sourceLang}:${settings.ocrLangs.join('+')}${cloudTag}:${hash}`;
+  // Ключ включает провайдера MT и настройки OCR: смена любого из них даёт
+  // другой ключ, и пользователь не получит чужой/устаревший результат.
+  const { scope, cacheId } = buildLocalCacheKey({
+    imageHash: hash,
+    regionOnly,
+    sourceLang: settings.sourceLang,
+    targetLang: settings.targetLang,
+    ocrLangs: settings.ocrLangs,
+    ocrQuality: settings.ocrQuality,
+    ocrMinConfidence: settings.ocrMinConfidence,
+    useNativeHost: settings.useNativeHost,
+    cloudOcr: settings.cloudOcr,
+    cloudTranslate: settings.cloudTranslate,
+    externalMt: settings.externalMt,
+    externalMtPriority: settings.externalMtPriority,
+  });
 
   const cached = await localCacheGet<TranslateResult>(scope, cacheId);
   if (cached) return cached;
