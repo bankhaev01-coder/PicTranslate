@@ -9,8 +9,10 @@ export async function getSettings(): Promise<Settings> {
   const settings: Settings = { ...DEFAULT_SETTINGS, ...raw };
   let dirty = false;
 
-  // Миграция устаревшей модели Gemini
-  if (settings.geminiModel === 'gemini-1.5-flash') {
+  // Миграция устаревших моделей Gemini: 1.5-flash снят с API, 2.5-flash закрыт
+  // для новых ключей (проверено живым запросом 29.09.2026 — API сам предлагает
+  // 3.8-flash). Оба id приводим к актуальному значению из DEFAULT_SETTINGS.
+  if (settings.geminiModel === 'gemini-1.5-flash' || settings.geminiModel === 'gemini-2.5-flash') {
     settings.geminiModel = 'gemini-3.8-flash';
     dirty = true;
   }

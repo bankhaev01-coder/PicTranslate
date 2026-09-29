@@ -374,7 +374,19 @@ async function localPipeline(
 
 /** Провайдер внешнего перевода из настроек (вызывается только при externalMt !== 'off'). */
 function externalProvider(settings: LocalEngineSettings): MtProvider {
-  return settings.externalMt === 'yandex' ? 'yandex' : 'google';
+  return settings.externalMt === 'yandex' || settings.externalMt === 'yandex-cloud'
+    ? (settings.externalMt as MtProvider)
+    : 'google';
+}
+
+/** Опции внешнего MT из настроек: ключ Яндекс.Облака для провайдера yandex-cloud. */
+function externalMtOptions(settings: LocalEngineSettings): { provider: MtProvider; yandexCloudApiKey?: string } {
+  return {
+    provider: externalProvider(settings),
+    ...(externalProvider(settings) === 'yandex-cloud' && settings.yandexCloudApiKey
+      ? { yandexCloudApiKey: settings.yandexCloudApiKey }
+      : {}),
+  };
 }
 
 /**
@@ -397,7 +409,7 @@ async function externalTranslate(
   const source = settings.sourceLang === 'auto' ? 'auto' : from;
   try {
     const { translation, detected: extDetected } = await translateLongText(sourceText, source, to, {
-      provider,
+      ...externalMtOptions(settings),
     });
     if (!translation.trim()) {
       return {
@@ -412,7 +424,7 @@ async function externalTranslate(
     // речи был свой текст; при сбое падаем на общий перевод.
     const boxes = await translateBoxesExternal(
       detectedBoxes,
-      provider,
+      settings,
       source,
       to,
       translation.trim(),
@@ -441,17 +453,18 @@ async function externalTranslate(
 /** Перевод текста каждого бокса через внешний сервис с фолбэком на общий перевод. */
 async function translateBoxesExternal(
   boxes: Box[],
-  provider: MtProvider,
+  settings: LocalEngineSettings,
   source: string,
   target: string,
   fullTranslation: string,
 ): Promise<Box[]> {
   const out: Box[] = [];
+  const options = externalMtOptions(settings);
   for (const b of boxes) {
     const boxText = (b.text ?? '').trim();
     if (!boxText) continue;
     try {
-      const { translation } = await translateLongText(boxText, source, target, { provider });
+      const { translation } = await translateLongText(boxText, source, target, options);
       out.push({ ...b, translation: translation.trim() || fullTranslation });
     } catch {
       out.push({ ...b, translation: fullTranslation });

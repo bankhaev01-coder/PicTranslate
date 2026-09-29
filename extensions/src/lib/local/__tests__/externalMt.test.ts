@@ -3,8 +3,10 @@ import {
   buildGtxUrl,
   buildYandexRequest,
   parseGtxResponse,
+  parseYandexCloudResponse,
   parseYandexResponse,
   toGoogleLang,
+  toYandexCloudLang,
   toYandexLang,
   translateLongText,
 } from '../externalMt';
@@ -89,8 +91,7 @@ describe('translateLongText', () => {
   });
 });
 
-describe('toYandexLang', () => {
-  it('passes plain codes through', () => expect(toYandexLang('ru')).toBe('ru'));
+describe('toYandexLang (legacy tr.json, deprecated)', () => {
   it('strips region suffix', () => expect(toYandexLang('en-US')).toBe('en'));
   it('maps iw → he', () => expect(toYandexLang('iw')).toBe('he'));
 });
@@ -131,7 +132,82 @@ describe('parseYandexResponse', () => {
   });
 });
 
-describe('translateLongText with yandex provider', () => {
+describe('yandex-cloud Translate v2', () => {
+  it('maps language codes', () => {
+    expect(toYandexCloudLang('ru')).toBe('ru');
+    expect(toYandexCloudLang('en-US')).toBe('en');
+    expect(toYandexCloudLang('')).toBe('auto');
+  });
+
+  it('parses translations and the detected language', () => {
+    expect(
+      parseYandexCloudResponse({
+        translations: [{ text: 'Привет', detectedLanguageCode: 'en' }],
+      }),
+    ).toEqual({ translation: 'Привет', sourceLang: 'en' });
+  });
+
+  it('throws on empty translations', () => {
+    expect(() => parseYandexCloudResponse({ translations: [] })).toThrow(/empty/);
+  });
+
+  it('requires an API key', async () => {
+    await expect(translateLongText('Hello', 'en', 'ru', { provider: 'yandex-cloud' })).rejects.toThrow(
+      /API key/,
+    );
+  });
+
+  it('sends texts + targetLanguageCode with Api-Key auth', async () => {
+    let seenUrl = '';
+    let seenInit: RequestInit | undefined;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      seenUrl = String(input);
+      seenInit = init;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ translations: [{ text: 'Привет', detectedLanguageCode: 'en' }] }),
+      };
+    }) as unknown as typeof fetch;
+
+    const res = await translateLongText('Hello', 'auto', 'ru', {
+      provider: 'yandex-cloud',
+      yandexCloudApiKey: 'AQ.test',
+      fetchImpl,
+    });
+    expect(res.translation).toBe('Привет');
+    expect(res.detected).toBe('en');
+    expect(seenUrl).toContain('translate.api.cloud.yandex.net');
+    const body = JSON.parse(String(seenInit?.body ?? '{}'));
+    expect(body.texts).toEqual(['Hello']);
+    expect(body.targetLanguageCode).toBe('ru');
+    expect(body.sourceLanguageCode).toBeUndefined(); // auto не отправляется
+    expect((seenInit?.headers as Record<string, string>)?.Authorization).toBe('Api-Key AQ.test');
+  });
+
+  it('omits sourceLanguageCode only for auto', async () => {
+    let seenBody = '';
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ translations: [{ text: 'X' }] }),
+    })) as unknown as typeof fetch;
+    // Перехватываем тело через обёртку: fetchImpl выше не сохраняет body, поэтому
+    // проверяем через явный вызов с сохранением.
+    const spy = (async (input: string | URL | Request, init?: RequestInit) => {
+      seenBody = String(init?.body ?? '');
+      return fetchImpl(input, init);
+    }) as unknown as typeof fetch;
+    await translateLongText('Hello', 'en', 'ru', {
+      provider: 'yandex-cloud',
+      yandexCloudApiKey: 'AQ.test',
+      fetchImpl: spy,
+    });
+    expect(JSON.parse(seenBody).sourceLanguageCode).toBe('en');
+  });
+});
+
+describe('translateLongText with legacy yandex provider', () => {
   it('dispatches to the Yandex endpoint and parses its response', async () => {
     const seen: string[] = [];
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {

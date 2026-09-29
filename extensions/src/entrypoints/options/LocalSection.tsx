@@ -192,7 +192,8 @@ export default function LocalSection({ settings, patch }: Props) {
         >
           <option value="off">{t('options.externalMtOff')}</option>
           <option value="google">{t('options.externalMtGoogle')}</option>
-          <option value="yandex">{t('options.externalMtYandex')}</option>
+          <option value="yandex-cloud">{t('options.externalMtYandexCloud')}</option>
+          <option value="yandex">{t('options.externalMtYandexLegacy')}</option>
         </select>
         <div className="hint">{t('options.externalMtHint')}</div>
       </div>
@@ -211,6 +212,22 @@ export default function LocalSection({ settings, patch }: Props) {
             <option value="fallback">{t('options.externalMtFallback')}</option>
           </select>
           <div className="hint">{t('options.externalMtPriorityHint')}</div>
+        </div>
+      )}
+
+      {settings.externalMt === 'yandex-cloud' && (
+        <div className="field">
+          <label htmlFor="yandexCloudApiKey">{t('options.yandexCloudApiKey')}</label>
+          <input
+            id="yandexCloudApiKey"
+            type="password"
+            value={settings.yandexCloudApiKey ?? ''}
+            onChange={(e) => patch({ yandexCloudApiKey: e.target.value.trim() })}
+            placeholder="AQ..."
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <div className="hint">{t('options.yandexCloudApiKeyHint')}</div>
         </div>
       )}
 

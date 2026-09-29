@@ -4,15 +4,18 @@
  * Используется, когда пользователь выбрал внешнего переводчика в настройках:
  * либо первым шагом (`externalMtPriority: 'prefer'`), либо только при сбое
  * локальной NMT-модели (`'fallback'`). На внешний сервис уходит только
- * распознанный ТЕКСТ (без изображения); оба провайдера бесплатны и работают
- * без API-ключа.
+ * распознанный ТЕКСТ (без изображения); Google (gtx) и неофициальный Яндекс
+ * (tr.json) работают без API-ключа, Яндекс.Облако v2 требует ключ сервисного
+ * аккаунта.
  *
  * Чистый модуль без DOM — юнит-тестируется в Node (fetch инжектится).
  */
 import { chunkText } from './text';
 
-/** Провайдеры внешнего перевода, доступные без API-ключа. */
-export type MtProvider = 'google' | 'yandex';
+/** Провайдеры внешнего перевода. `yandex` — неофициальный tr.json мобильного
+ * клиента (жив на 29.09.2026, но без гарантий); `yandex-cloud` — официальный
+ * API Яндекс.Облака v2 с API-ключом. */
+export type MtProvider = 'google' | 'yandex' | 'yandex-cloud';
 
 export interface ExternalMtOptions {
   signal?: AbortSignal;
@@ -23,6 +26,12 @@ export interface ExternalMtOptions {
   chunkMaxLen?: number;
   /** Какой внешний сервис использовать (по умолчанию Google). */
   provider?: MtProvider;
+  /**
+   * Яндекс.Облако Translate v2: API-ключ сервисного аккаунта (`AQ...`).
+   * Без него провайдер 'yandex-cloud' недоступен. Folder id НЕ нужен:
+   * используется бессерверный эндпоинт detect без folderId.
+   */
+  yandexCloudApiKey?: string;
 }
 
 export interface ExternalMtResult {
@@ -201,9 +210,84 @@ async function fetchChunk(
   target: string,
   options: ExternalMtOptions,
 ): Promise<GtxParsed | YandexParsed> {
-  return (options.provider ?? 'google') === 'yandex'
+  const provider = options.provider ?? 'google';
+  if (provider === 'yandex-cloud') return fetchYandexCloudChunk(text, source, target, options);
+  return provider === 'yandex'
     ? fetchYandexChunk(text, source, target, options)
     : fetchGoogleChunk(text, source, target, options);
+}
+
+/* ── Яндекс.Облако Translate v2 (официальный API, API-ключ `AQ...`) ──── */
+/* Документация: https://yandex.cloud/ru/docs/translate/api-ref/translation/translate */
+
+const YANDEX_CLOUD_ENDPOINT = 'https://translate.api.cloud.yandex.net/translate/v2/translate';
+
+/** Код языка настроек → код Яндекс.Облака (BCP-47, регион отбрасывается). */
+export function toYandexCloudLang(lang: string): string {
+  const base = lang.split('-')[0]?.split('_')[0]?.toLowerCase() ?? '';
+  if (base === 'iw') return 'he';
+  return base || 'auto';
+}
+
+export interface YandexCloudTranslated {
+  text: string;
+  detectedLanguageCode?: string;
+}
+
+export interface YandexCloudResponse {
+  translations?: YandexCloudTranslated[];
+}
+
+/** Разобрать ответ v2/translate: склеить `translations[].text`, язык — из первого. */
+export function parseYandexCloudResponse(json: unknown): GtxParsed {
+  const o = json as YandexCloudResponse | null;
+  const list = Array.isArray(o?.translations) ? o.translations : [];
+  const translation = list.map((t) => String(t?.text ?? '')).join('');
+  const sourceLang = list[0]?.detectedLanguageCode?.split('-')[0];
+  if (!translation) throw new Error('yandex-cloud: empty translations');
+  return { translation, sourceLang };
+}
+
+/** Один фрагмент через Яндекс.Облако v2 (POST JSON, ключ в `Authorization: Api-Key`). */
+async function fetchYandexCloudChunk(
+  text: string,
+  source: string,
+  target: string,
+  options: ExternalMtOptions,
+): Promise<GtxParsed> {
+  const { signal, timeoutMs = 30_000, fetchImpl, yandexCloudApiKey } = options;
+  if (!yandexCloudApiKey) throw new Error('yandex-cloud: API key is not configured');
+  const fetchFn = fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
+  const body = {
+    texts: [text],
+    targetLanguageCode: toYandexCloudLang(target),
+    ...(toYandexCloudLang(source) === 'auto'
+      ? {}
+      : { sourceLanguageCode: toYandexCloudLang(source) }),
+  };
+  try {
+    const resp = await fetchFn(YANDEX_CLOUD_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Api-Key ${yandexCloudApiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`yandex-cloud: HTTP ${resp.status}`);
+    return parseYandexCloudResponse(await resp.json());
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('yandex-cloud: request timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

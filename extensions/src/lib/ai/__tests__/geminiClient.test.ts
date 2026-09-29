@@ -39,6 +39,24 @@ describe('translateWithGemini', () => {
     expect(res.latency_ms).toBeGreaterThanOrEqual(0);
   });
 
+  it('brings the retired 2.5-flash id up to 3.8-flash', async () => {
+    const res = await translateWithGemini('BASE64', {
+      apiKey: '',
+      targetLang: 'ru',
+      model: 'gemini-2.5-flash',
+    });
+    expect(res.model).toBe('gemini:gemini-3.8-flash');
+  });
+
+  it('maps the retired 1.5-flash id to 3.8-flash', async () => {
+    const res = await translateWithGemini('BASE64', {
+      apiKey: '',
+      targetLang: 'ru',
+      model: 'gemini-1.5-flash',
+    });
+    expect(res.model).toBe('gemini:gemini-3.8-flash');
+  });
+
   it('reports the configured model in the result', async () => {
     const res = await translateWithGemini('BASE64', {
       apiKey: '',

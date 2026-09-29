@@ -89,6 +89,9 @@ function isBox(b: unknown): boolean {
   return ['x', 'y', 'width', 'height'].every((k) => typeof o[k] === 'number');
 }
 
+/** Flash-модели, снятые с API: живут в сохранённых настройках старых установок. */
+const RETIRED_GEMINI_MODELS = new Set(['gemini-2.5-flash', 'gemini-1.5-flash']);
+
 /**
  * Переводит изображение через Gemini Vision API напрямую из браузера.
  */
@@ -98,13 +101,13 @@ export async function translateWithGemini(
 ): Promise<TranslateResult> {
   const t0 = performance.now();
   const elapsed = () => Math.round(performance.now() - t0);
-  const {
-    apiKey,
-    model = 'gemini-3.8-flash',
-    targetLang,
-    timeoutMs = 60_000,
-    signal,
-  } = options;
+  const { apiKey, targetLang, timeoutMs = 60_000, signal } = options;
+  // Дефолт — актуальная flash-модель проекта (см. DEFAULT_SETTINGS.geminiModel).
+  // Снятые с API id из старых настроек (2.5-flash, 1.5-flash) приводим к ней:
+  // живая проверка 29.09.2026 отдаёт на 2.5-flash «no longer available to new
+  // users» с рекомендацией 3.8-flash.
+  const requested = options.model ?? 'gemini-3.8-flash';
+  const model = RETIRED_GEMINI_MODELS.has(requested) ? 'gemini-3.8-flash' : requested;
 
   if (!apiKey) {
     return {
@@ -128,8 +131,8 @@ export async function translateWithGemini(
         parts: [
           { text: prompt },
           {
-            inline_data: {
-              mime_type: 'image/png',
+            inlineData: {
+              mimeType: 'image/png',
               data: cleanBase64,
             },
           },

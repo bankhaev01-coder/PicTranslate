@@ -8,7 +8,7 @@ export type ModelId = 'local' | 'tesseract' | 'openai' | 'gemini' | 'custom' | '
 export type BubbleShape = 'rectangle' | 'oval' | 'none';
 
 /** Внешний переводчик для автономного движка (распознанный ТЕКСТ уходит в сеть). */
-export type ExternalMtProvider = 'off' | 'google' | 'yandex';
+export type ExternalMtProvider = 'off' | 'google' | 'yandex' | 'yandex-cloud';
 
 /**
  * Порядок применения внешнего переводчика:
@@ -55,8 +55,15 @@ export interface Settings {
   /**
    * Автономный режим: внешний переводчик (Google/Яндекс) для распознанного ТЕКСТА.
    * 'off' по умолчанию — автономный режим остаётся офлайновым.
+   * 'yandex' — неофициальный tr.json (работает, но без SLA); 'yandex-cloud' —
+   * официальный API v2 (нужен API-ключ).
    */
   externalMt: ExternalMtProvider;
+  /**
+   * API-ключ Яндекс.Облака Translate v2 (`AQ...`) для провайдера 'yandex-cloud'.
+   * Хранится локально в профиле браузера, в сеть уходит только текст запроса.
+   */
+  yandexCloudApiKey: string;
   /** 'prefer' — внешний переводчик пробуется первым, локальная модель как запасной вариант. */
   externalMtPriority: ExternalMtPriority;
   /** Форма облачка с речевым переводом над комиксами */
@@ -116,6 +123,7 @@ export type LocalEngineSettings = Pick<
   | 'useNativeHost'
   | 'externalMt'
   | 'externalMtPriority'
+  | 'yandexCloudApiKey'
   | 'ocrMinConfidence'
   | 'cloudOcr'
   | 'cloudTranslate'

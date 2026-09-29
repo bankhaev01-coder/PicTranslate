@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // Когда внешний включён, он идёт первым, а локальная модель — запасной вариант.
   externalMt: 'off',
   externalMtPriority: 'prefer',
+  yandexCloudApiKey: '',
   bubbleShape: 'oval',
   useNativeHost: false,
   ocrLangs: ['eng', 'rus'],

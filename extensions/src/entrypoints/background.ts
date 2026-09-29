@@ -153,6 +153,7 @@ async function translateByEngine(
       useNativeHost: settings.useNativeHost,
       externalMt: settings.externalMt,
       externalMtPriority: settings.externalMtPriority,
+      yandexCloudApiKey: settings.yandexCloudApiKey ?? '',
       ocrMinConfidence: settings.ocrMinConfidence ?? 40,
       cloudOcr: settings.cloudOcr,
       cloudTranslate: settings.cloudTranslate,
