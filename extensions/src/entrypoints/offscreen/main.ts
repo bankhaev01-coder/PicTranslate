@@ -230,10 +230,10 @@ async function localPipeline(
   // Native host может заменять вендор-пак tesseract-воркера.
   // Tesseract-пак не нужен, если текст уже пришёл из облака (без cloudTranslate).
   if (!sourceText && !hasTesseractPack && !settings.useNativeHost) {
-    return fail('offline asset pack is missing: run npm run vendor and rebuild the extension');
+    return fail(i18n.t('local.errOcrPackMissing'));
   }
   if (!vendor?.pairs.length) {
-    return fail('offline translation model pack is missing: run npm run vendor and rebuild the extension');
+    return fail(i18n.t('local.errModelPackMissing'));
   }
 
   // 1.1) OCR (если текст не пришёл из облака) — либо встроенный tesseract-воркер, либо native host.

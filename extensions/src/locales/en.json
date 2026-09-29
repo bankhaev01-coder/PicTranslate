@@ -156,6 +156,8 @@
     "errModelLoad": "Failed to load the translation model",
     "errMtFailed": "Translation failed",
     "errExternalFailed": "External translation failed",
-    "errOcrLangMissing": "OCR language packs missing: {{langs}} — enable bundled languages in settings"
+    "errOcrLangMissing": "OCR language packs missing: {{langs}} — enable bundled languages in settings",
+    "errOcrPackMissing": "Offline OCR assets are missing. Run npm run vendor and rebuild the extension.",
+    "errModelPackMissing": "The offline translation model pack is missing. Run npm run vendor and rebuild the extension."
   }
 }
