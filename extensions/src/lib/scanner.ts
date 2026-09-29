@@ -101,7 +101,7 @@ export interface CropGeometry {
   sh: number;
   outW: number;
   outH: number;
-  /** Фактический масштаб исходник→CSS (уже с капом DPR). */
+  /** Истинный масштаб кадра (device-px на CSS px): позиция вырезки и точек лассо. */
   effScale: number;
 }
 
@@ -109,7 +109,12 @@ export interface CropGeometry {
  * Чистая геометрия кропа области (без DOM/canvas — юнит-тестируется).
  * `bitmap` — размер скриншота в device-px, `viewportBox` — область во вьюпорте
  * (CSS px, уже через regionToViewport), `viewportSize` — размер вьюпорта CSS px.
- * DPR режется до MAX_CAPTURE_DPR, длинная сторона — до MAX_CROP_SIDE.
+ *
+ * Позиция вырезки считается по ИСТИННОМУ масштабу кадра (device-px на CSS px):
+ * он равен DPR/зум страницы, и им же масштабируются точки лассо. Потолки
+ * (MAX_CAPTURE_DPR, MAX_CROP_SIDE) ограничивают только размер выходной канвы:
+ * если подменить ими масштаб, при DPR>2 или зуме >200 % вырезка уезжает
+ * от выделенной области (кроп чужого куска страницы).
  */
 export function computeCropSize(
   bitmap: { width: number; height: number },
@@ -117,14 +122,19 @@ export function computeCropSize(
   viewportSize: { width: number; height: number },
 ): CropGeometry {
   const rawScale = viewportSize.width > 0 ? bitmap.width / viewportSize.width : 1;
-  const effScale = Math.min(Math.max(rawScale, 1), MAX_CAPTURE_DPR);
+  const srcScale = rawScale > 0 ? rawScale : 1;
   const b = viewportBox;
-  const sx = Math.max(0, Math.round(b.x * effScale));
-  const sy = Math.max(0, Math.round(b.y * effScale));
-  const sw = Math.max(1, Math.min(bitmap.width - sx, Math.round(b.width * effScale)));
-  const sh = Math.max(1, Math.min(bitmap.height - sy, Math.round(b.height * effScale)));
+  const sx = Math.max(0, Math.round(b.x * srcScale));
+  const sy = Math.max(0, Math.round(b.y * srcScale));
+  const sw = Math.max(1, Math.min(Math.max(bitmap.width - sx, 1), Math.round(b.width * srcScale)));
+  const sh = Math.max(1, Math.min(Math.max(bitmap.height - sy, 1), Math.round(b.height * srcScale)));
+
+  // Доля вырезки, остающаяся в канве: кап DPR и кап длинной стороны.
+  const dprFit = Math.min(1, MAX_CAPTURE_DPR / srcScale);
   const longSide = Math.max(sw, sh);
-  const fit = longSide > MAX_CROP_SIDE ? MAX_CROP_SIDE / longSide : 1;
+  const sideFit = longSide > MAX_CROP_SIDE ? MAX_CROP_SIDE / longSide : 1;
+  const fit = Math.min(dprFit, sideFit);
+
   return {
     sx,
     sy,
@@ -132,7 +142,7 @@ export function computeCropSize(
     sh,
     outW: Math.max(1, Math.round(sw * fit)),
     outH: Math.max(1, Math.round(sh * fit)),
-    effScale,
+    effScale: srcScale,
   };
 }
 

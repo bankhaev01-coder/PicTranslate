@@ -14,15 +14,23 @@ describe('computeCropSize', () => {
     expect(g).toMatchObject({ sx: 100, sy: 80, sw: 300, sh: 200, outW: 300, outH: 200 });
   });
 
-  it('caps DPR at MAX_CAPTURE_DPR (retina 3x -> 2x)', () => {
+  it('caps the output at MAX_CAPTURE_DPR without shifting the crop (retina 3x)', () => {
     const g = computeCropSize(
       { width: 2400, height: 1800 },
       { x: 100, y: 80, width: 300, height: 200 },
       vp,
     );
-    expect(g.effScale).toBe(MAX_CAPTURE_DPR);
-    // 300 CSS px * 2 вместо 300 * 3: в 2.25 раза меньше пикселей.
-    expect(g).toMatchObject({ sx: 200, sy: 160, sw: 600, sh: 400, outW: 600, outH: 400 });
+    // Позиция вырезки — по истинному масштабу кадра: 100 CSS px * 3 = 300 device-px.
+    expect(g.effScale).toBe(3);
+    expect(g).toMatchObject({ sx: 300, sy: 240, sw: 900, sh: 600 });
+    // Выход ужат до 2x от CSS-размера: 300 CSS px -> 600 px (а не 900).
+    expect(g).toMatchObject({
+      outW: 300 * MAX_CAPTURE_DPR,
+      outH: 200 * MAX_CAPTURE_DPR,
+    });
+    // Маска лассо ложится в канву: правый край области — ровно правый край вырезки.
+    const fit = g.outW / g.sw;
+    expect((400 * g.effScale - g.sx) * fit).toBe(g.outW);
   });
 
   it('passes fractional DPR through when under the cap', () => {
@@ -83,18 +91,17 @@ describe('computeCropSize', () => {
     expect(g.sh).toBeGreaterThanOrEqual(1);
   });
 
-  it('keeps lasso points inside the canvas after DPR cap and downscale', () => {
-    // Ретина DPR 3 -> кап 2. В реальном потоке широкая область сначала режется
-    // regionToViewport по вьюпорту 800: вход уже клампнут (800x100 CSS).
-    // Вырезка 1600x200 -> fit 1, маска лассо ложится 1:1 в канву.
+  it('keeps lasso points inside the canvas after the DPR cap and downscale', () => {
+    // Ретина DPR 3, кап выхода 2x. Область 800x100 CSS: вырезка 2400x300 по
+    // истинному масштабу, канва ужимается до 1600x200.
     const g = computeCropSize(
       { width: 2400, height: 1800 },
       { x: 0, y: 0, width: 800, height: 100 },
       vp,
     );
-    expect(g.effScale).toBe(2);
-    expect(g).toMatchObject({ sw: 1600, sh: 200, outW: 1600, outH: 200 });
-    // Локальная координата правого края области в канве: (800*2 - 0) * 1 = 1600.
+    expect(g.effScale).toBe(3);
+    expect(g).toMatchObject({ sw: 2400, sh: 300, outW: 1600, outH: 200 });
+    // Локальная координата правого края области в канве: (800*3 - 0) * fit = 1600.
     const fit = g.outW / g.sw;
     const lx = (800 * g.effScale - g.sx) * fit;
     const ly = (100 * g.effScale - g.sy) * fit;
@@ -102,6 +109,32 @@ describe('computeCropSize', () => {
     expect(ly).toBeLessThanOrEqual(g.outH);
     expect(lx).toBeGreaterThanOrEqual(0);
     expect(ly).toBeGreaterThanOrEqual(0);
+  });
+
+  it('keeps the crop aligned when the page is zoomed out (scale below 1)', () => {
+    // Зум 80 %: вьюпорт 1280 CSS px, а кадр — 1024 device-px (DPR 1).
+    const zoomOutVp = { width: 1280, height: 960 };
+    const g = computeCropSize(
+      { width: 1024, height: 768 },
+      { x: 100, y: 100, width: 200, height: 100 },
+      zoomOutVp,
+    );
+    expect(g.effScale).toBe(0.8);
+    expect(g).toMatchObject({ sx: 80, sy: 80, sw: 160, sh: 80 });
+    // Выход не растягиваем: пиксели канвы — device-px кадра, 1:1.
+    expect(g.outW).toBe(160);
+    expect(g.outH).toBe(80);
+  });
+
+  it('applies the DPR cap and the long-side cap together on the true scale', () => {
+    // DPR 3 и широкое выделение 1000x200 CSS: вырезка 3000x600, канва — 1600.
+    const g = computeCropSize(
+      { width: 3000, height: 1000 },
+      { x: 0, y: 0, width: 1000, height: 200 },
+      { width: 1000, height: 333 },
+    );
+    expect(g.effScale).toBe(3);
+    expect(g).toMatchObject({ sw: 3000, sh: 600, outW: MAX_CROP_SIDE, outH: 320 });
   });
 
   it('scales lasso points with fit when the long side is downscaled', () => {
