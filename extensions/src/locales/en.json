@@ -36,9 +36,9 @@
     "shape.oval": "Oval",
     "shape.lasso": "Lasso",
     "selectHint": {
-      "rectangle": "Drag a rectangle over the area to re-translate. More areas can be added right away — Enter translates them all, Esc resets",
-      "oval": "Drag an oval over the speech bubble to re-translate. More areas can be added right away — Enter translates them all, Esc resets",
-      "lasso": "Trace a freehand outline around the area to re-translate. You can trace several areas — Enter translates them all, Esc resets"
+      "rectangle": "Drag a rectangle over the area — translation starts right away, no need to keep it on screen. More areas work the same, Esc resets",
+      "oval": "Drag an oval over the speech bubble — translation starts right away, no need to keep it on screen. More areas work the same, Esc resets",
+      "lasso": "Trace a freehand outline around the area — translation starts right away, no need to keep it on screen. More areas work the same, Esc resets"
     },
     "clearLabels": "Hide translations",
     "showLabels": "Show translations",

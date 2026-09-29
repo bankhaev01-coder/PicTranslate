@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import { getSettings } from '@/lib/storage';
 import { initI18nFromSettings } from '@/lib/i18n';
 import { runConcurrent } from '@/lib/queue';
+import { createJobQueue } from '@/lib/jobQueue';
 import { OverlayUI } from '@/lib/overlay';
 import { regionKey } from '@/lib/selection';
 import { cropRegion, fetchImageBlob, scanImages, type ImageFetchResult } from '@/lib/scanner';
@@ -29,6 +30,13 @@ export default defineUnlistedScript(() => {
   const doneIds = new Set<string>();
   /** Области выделения, переведённые успешно: повторный Enter их пропускает. */
   const translatedRegions = new Set<string>();
+  /**
+   * Crops of selected regions (key: generation + region): captured while the
+   * area is on screen, so translation and retries do not need it visible.
+   */
+  const regionCrops = new Map<string, string>();
+  /** Regions queued or in flight: dedup for repeated Enter / double click. */
+  const regionInFlight = new Set<string>();
   /** Поколение выделения: Esc/«Очистить»/новый скан гасят прилетевшие позже плашки. */
   let batchToken = 0;
   /** Изображения текущей сессии — для пересчёта прогресса при удалении. */
@@ -78,6 +86,7 @@ export default defineUnlistedScript(() => {
     removed.clear();
     doneIds.clear();
     translatedRegions.clear();
+    regionCrops.clear();
     // Новый скан — новое поколение: пачки в полёте от старого оверлея дропаются.
     batchToken++;
     sessionImages = images;
@@ -87,6 +96,9 @@ export default defineUnlistedScript(() => {
         // Промис возвращаем в overlay: он держит регион-кнопку заблокированной до
         // конца всей пачки. С `void` finally срабатывает сразу — второй Enter во
         // время полёта запускал дублирующий capture+OCR+MT (регрессия E2E).
+        // A region was just selected - queue it right away: the snapshot is
+        // taken on the spot, the page can be scrolled afterwards.
+        onRegionSelected: (region) => void queueRegion(region),
         onRegionsSelected: (regions) => translateRegions(regions),
         onRemoveImage: (id) => {
           // Уже переведённая картинка больше не участвует в прогрессе.
@@ -94,9 +106,14 @@ export default defineUnlistedScript(() => {
           syncProgress();
         },
         // Удалённую область переведённой не считаем: заново обвёл — переведи.
-        onRegionRemoved: (id) => translatedRegions.delete(id),
+        onRegionRemoved: (id) => {
+          translatedRegions.delete(id);
+          // The crop of a cancelled region is no longer needed.
+          regionCrops.delete(`${batchToken}:${id}`);
+        },
         onRegionsCleared: () => {
           translatedRegions.clear();
+          regionCrops.clear();
           batchToken++;
         },
         onClose: () => closeOverlay(),
@@ -218,54 +235,160 @@ export default defineUnlistedScript(() => {
     }
   }
 
-  async function translateRegions(regions: SelectionRegion[]) {
-    if (!regions.length) return;
-    // Повторный Enter переводит только несделанное: готовые области
-    // пропускаем, иначе пачка уходит на сервер заново (жалоба п.2).
-    const pending = regions.filter((r) => !translatedRegions.has(regionKey(r)));
-    if (!pending.length) return;
-    const settings = await getSettings();
-    const cap = await captureWithoutUi();
-    if (!cap.dataUrl) {
-      const text = `⚠ ${cap.error ?? 'capture failed'}`;
-      for (const region of pending) {
-        if (region.token !== batchToken) continue;
-        overlay?.showRegionResult(region, text);
-      }
-      return;
-    }
-    const shot = cap.dataUrl;
-    // Скролл на момент скриншота: кроп вычитает его из документных координат.
-    const scrollAtCapture = { x: window.scrollX, y: window.scrollY };
-    // Токен пачки: Esc/«Очистить»/новый скан во время перевода — прилетевшие
-    // позже плашки дропаются, а не всплывают на сброшенное выделение.
-    const token = batchToken;
+  /** Snapshots strictly one at a time: overlapping hide/show would capture a foreign frame. */
+  let captureChain: Promise<unknown> = Promise.resolve();
+  function captureSerialized(): Promise<CaptureVisibleResponse> {
+    const run = captureChain.then(() => captureWithoutUi());
+    captureChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
-    // Одно CAPTURE_VISIBLE на пачку: все области вырезаются из одного кадра,
-    // поэтому N выделений стоят один скриншот, а не N.
-    await runConcurrent(
-      pending,
-      settings.translateConcurrency ?? 1,
-      async (region) => {
-        // Маскирование формой выполняется на скриншоте, чтобы графический шум
-        // вокруг текста (ары фона, рамки панелей) не доходил до OCR/vision-модели.
-        const blob = await cropRegion(shot, region, scrollAtCapture);
-        const dataUrl = await blobToDataUrl(blob);
+  /**
+   * Crop/task key: generation + region. Region ids restart on a new scan (a
+   * fresh OverlayUI), so without the generation the keys of different scans
+   * would collide and cache/dedup would silently drop jobs.
+   */
+  function regionJobKey(region: SelectionRegion): string {
+    return `${region.token}:${regionKey(region)}`;
+  }
+
+  /**
+   * Region translation queue: the crop was taken at selection time, here only
+   * the engine request goes out - one shared translateConcurrency limit for
+   * all batches. A result is dropped by the generation token (Esc/Clear/new
+   * scan while the job was queued).
+   */
+  const regionQueue = createJobQueue<{ key: string; region: SelectionRegion; dataUrl: string }>(
+    1,
+    async ({ key, region, dataUrl }) => {
+      try {
         const res = await sendToBackground<TranslateResult>({
           type: 'TRANSLATE_DATA_URL',
           imageId: region.id ?? 'region',
           dataUrl,
           regionOnly: true,
         });
-        if (region.token !== token) return;
+        if (region.token !== batchToken) return;
         const failed = Boolean(res.error);
         if (!failed) translatedRegions.add(regionKey(region));
-        overlay?.showRegionResult(region, res.error ? `⚠ ${res.error}` : res.translation || '—');
-      },
-      (region, error) => {
-        if (region.token !== token) return;
-        overlay?.showRegionResult(region, `⚠ ${String(error)}`);
-      },
-    );
+        overlay?.showRegionResult(
+          region,
+          res.error ? `\u26A0 ${res.error}` : res.translation || '\u2014',
+          !failed,
+        );
+      } catch (error) {
+        if (region.token !== batchToken) return;
+        overlay?.showRegionResult(region, `\u26A0 ${String(error)}`, false);
+      } finally {
+        regionInFlight.delete(key);
+      }
+    },
+  );
+
+  /** Push a crop into the queue (a repeat for the same region is ignored). */
+  function pushRegionJob(region: SelectionRegion, dataUrl: string) {
+    const key = regionJobKey(region);
+    if (regionInFlight.has(key)) return;
+    regionInFlight.add(key);
+    regionQueue.push({ key, region, dataUrl });
+  }
+
+  /** Cut the region out of the frame and store the crop for its generation. */
+  async function cropAndCache(
+    region: SelectionRegion,
+    shot: string,
+    scroll: { x: number; y: number },
+  ): Promise<string> {
+    const blob = await cropRegion(shot, region, scroll);
+    const dataUrl = await blobToDataUrl(blob);
+    regionCrops.set(regionJobKey(region), dataUrl);
+    return dataUrl;
+  }
+
+  /**
+   * Region selected - queue it right away: the frame is captured on the spot
+   * while the area is on screen, the crop is cached and the translation runs
+   * in the background. After mouseup the page can be scrolled - this area will
+   * not be part of any later frame.
+   */
+  async function queueRegion(region: SelectionRegion): Promise<void> {
+    try {
+      const cap = await captureSerialized();
+      // Esc/Clear/new scan while the snapshot was in flight - drop the job.
+      if (region.token !== batchToken) return;
+      if (!cap.dataUrl) {
+        overlay?.showRegionResult(region, `\u26A0 ${cap.error ?? 'capture failed'}`, false);
+        return;
+      }
+      // Scroll is read right after the snapshot response - closest to the frame.
+      const scrollAtCapture = { x: window.scrollX, y: window.scrollY };
+      const dataUrl = await cropAndCache(region, cap.dataUrl, scrollAtCapture);
+      const settings = await getSettings();
+      regionQueue.setLimit(settings.translateConcurrency ?? 1);
+      pushRegionJob(region, dataUrl);
+    } catch (e) {
+      if (region.token !== batchToken) return;
+      overlay?.showRegionResult(region, `\u26A0 ${String(e)}`, false);
+    }
+  }
+
+  /**
+   * Re-order via button/Enter: translates regions that are not done yet.
+   * Fresh ones already sit in the queue as crops (taken at selection) and are
+   * not pushed twice (regionInFlight); regions without a frame (snapshot failed
+   * at selection / manual retry) get one shared snapshot for the whole batch.
+   */
+  async function translateRegions(regions: SelectionRegion[]) {
+    if (!regions.length) return;
+    // A repeat Enter only translates what is not done: finished regions are
+    // skipped, otherwise the batch would hit the server again (complaint p.2).
+    const pending = regions.filter((r) => !translatedRegions.has(regionKey(r)));
+    if (!pending.length) return;
+    const token = batchToken;
+    const settings = await getSettings();
+    regionQueue.setLimit(settings.translateConcurrency ?? 1);
+
+    const showFor = (list: SelectionRegion[], text: string) => {
+      for (const region of list) {
+        if (region.token === token) overlay?.showRegionResult(region, text, false);
+      }
+    };
+
+    // Regions without a frame: the snapshot failed at selection time or a
+    // manual retry - one shared snapshot for them, as before.
+    const withoutCrop = pending.filter((r) => !regionCrops.has(regionJobKey(r)));
+    if (withoutCrop.length) {
+      let shot: string | null = null;
+      try {
+        const cap = await captureSerialized();
+        shot = cap.dataUrl ?? null;
+        if (!shot) showFor(withoutCrop, `\u26A0 ${cap.error ?? 'capture failed'}`);
+      } catch (e) {
+        showFor(withoutCrop, `\u26A0 ${String(e)}`);
+      }
+      if (shot) {
+        // Scroll at snapshot time: the crop subtracts it from document coords.
+        const scrollAtCapture = { x: window.scrollX, y: window.scrollY };
+        for (const region of withoutCrop) {
+          if (region.token !== token) continue;
+          try {
+            await cropAndCache(region, shot, scrollAtCapture);
+          } catch (e) {
+            overlay?.showRegionResult(region, `\u26A0 ${String(e)}`, false);
+          }
+        }
+      }
+    }
+
+    for (const region of pending) {
+      if (region.token !== token) continue;
+      const dataUrl = regionCrops.get(regionJobKey(region));
+      if (dataUrl) pushRegionJob(region, dataUrl);
+    }
+    // The batch promise for overlay: regionsBusy holds until the queue drains.
+    await regionQueue.drain();
   }
 });

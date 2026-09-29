@@ -18,6 +18,18 @@ export interface OverlayCallbacks {
    * Возвращаемый промис — активная пачка: overlay держит кнопку заблокированной,
    * пока он не завершится (двойной Enter во время перевода — пропуск).
    */
+  /**
+   * Region just selected (mouseup) goes to the translate queue right away:
+   * the frame is captured on the spot while the area is on screen, so after
+   * selection it does not have to stay visible.
+   */
+  onRegionSelected?: (region: SelectionRegion) => void;
+  /**
+   * Re-order via button/Enter: translate accumulated regions not yet done
+   * (retry after error, regions without a frame). The returned promise is the
+   * active batch: overlay keeps the button disabled until it settles (double
+   * Enter during a flight is a no-op).
+   */
   onRegionsSelected: (regions: SelectionRegion[]) => Promise<void> | void;
   /** Пользователь убрал изображение из очереди (до или во время перевода). */
   onRemoveImage: (imageId: string) => void;
@@ -288,6 +300,17 @@ export class OverlayUI {
    */
   setCaptureHidden(hidden: boolean): void {
     this.host.style.visibility = hidden ? 'hidden' : '';
+    // Слой выделения остаётся кликабельным под скрытым хостом: visibility
+    // наследуется, но его можно переопределить. Снимок дёргается на каждом
+    // mouseup, и mousedown в окно снимка (~100 мс) не должен теряться.
+    // Сам слой при скрытии делаем прозрачным (его фон ушёл бы в кадр),
+    // а детей (подсказка, превью фигуры) гасим — в кадр не попадают.
+    if (!this.selLayer) return;
+    this.selLayer.style.visibility = hidden ? 'visible' : '';
+    this.selLayer.style.background = hidden ? 'transparent' : '';
+    for (const child of Array.from(this.selLayer.children)) {
+      (child as HTMLElement).style.visibility = hidden ? 'hidden' : '';
+    }
   }
 
   /**
@@ -355,6 +378,11 @@ export class OverlayUI {
   /* ── мульти-выделение: накопление областей и результаты ──── */
 
   /** Отдать набранные области вызывающей стороне (одна пачка, один скриншот). */
+  /**
+   * Re-order via button/Enter: fresh regions enter the queue themselves on
+   * selection; here the untranslated ones are collected (retry after an error,
+   * regions without a frame) - one batch, one shared snapshot if needed.
+   */
   private translateSelected() {
     if (!this.regions.length || this.regionsBusy) return;
     this.regionsBusy = true;
@@ -423,10 +451,17 @@ export class OverlayUI {
    * Якорь хранится в координатах документа, поэтому плашка едет вместе со
    * страницей при скролле и живёт до «Очистить»/Esc, а не 15 секунд.
    */
-  showRegionResult(region: SelectionRegion, text: string) {
+  showRegionResult(region: SelectionRegion, text: string, translated = false) {
     // id всегда есть (ставится при создании области): генерить новый тут нельзя,
     // иначе повторный показ той же области плодит плашки под разными ключами.
     const id = region.id ?? regionKey(region);
+    // бласть отменена/очищена, пока её кроп стоял в очереди: контур уже
+    // удалён, плашку на пустое место не рисуем. лаг «переведено» (он же
+    // блокирует кнопку дозаказа) синхронизируем здесь же.
+    if (!this.regions.some((r) => (r.id ?? regionKey(r)) === id)) return;
+    if (translated) this.translatedRegions.add(id);
+    else this.translatedRegions.delete(id);
+    this.updateSelectionUI();
     this.regionPlates.get(id)?.el.remove();
 
     const b = region.bounds;
@@ -684,6 +719,9 @@ export class OverlayUI {
       this.regions.push(region);
       this.drawRegionMark(region);
       this.updateSelectionUI();
+      // Сразу в очередь: кадр снимается, пока область на экране, — после
+      // mouseup выделение можно не удерживать в видимости.
+      this.cb.onRegionSelected?.(region);
     };
 
     this.selLayer.addEventListener('mousedown', onDown);
