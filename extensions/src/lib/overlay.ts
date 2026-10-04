@@ -305,6 +305,7 @@ export class OverlayUI {
           ? `⚠ ${result.error}`
           : result.translation || i18n.t('overlay.noText');
         row.textEl.textContent = text;
+        this.showOcrSource(row.root, result);
       }
     }
     if (status === 'done' || status === 'error') this.setProgress(done, total);
@@ -317,6 +318,23 @@ export class OverlayUI {
       // Never put the same whole-page text on top of the image AND in bubbles.
       if (!hasBubbles) this.showLabel(imageId, result.translation);
     }
+  }
+
+  private showOcrSource(root: HTMLElement, result: TranslateResult) {
+    root.querySelector('.source-details')?.remove();
+    if (!result.source_text?.trim()) return;
+    const details = el('details', { class: 'source-details' });
+    details.append(el('summary', { text: i18n.t('overlay.ocrSource') }),
+      el('div', { class: 'source-model', text: `${i18n.t('overlay.resultModel')}: ${result.model}` }),
+      el('pre', { class: 'source-text', text: result.source_text }));
+    root.querySelector('.body')?.append(details);
+  }
+
+  private addSourceMask(bubble: HTMLElement, box: Box) {
+    if (!box.maskSource) return;
+    bubble.classList.add('has-source-mask');
+    bubble.append(el('span', { class: 'source-mask', 'aria-hidden': 'true' }),
+      el('span', { class: 'bubble-frame', 'aria-hidden': 'true' }));
   }
 
   setProgress(done: number, total: number) {
@@ -604,6 +622,7 @@ export class OverlayUI {
     const shapeClass = this.bubbleShape === 'rectangle' ? 'rect' : 'oval';
     for (const box of withText) {
       const bubble = el('div', { class: `bubble ${shapeClass}` });
+      this.addSourceMask(bubble, box);
       const text = el('span', { class: 'bubble-text', text: box.translation ?? '' });
       bubble.append(text);
       group.append(bubble);
@@ -625,6 +644,7 @@ export class OverlayUI {
     const textEl = el('div', { class: 'text', text: result.translation || i18n.t('overlay.noText') });
     body.append(statusEl, textEl);
     root.append(body);
+    this.showOcrSource(root, result);
     this.listEl.prepend(root);
     this.rows.set(id, { root, statusEl, textEl });
     const boxes = snapshotBoxesToDocument(result.boxes ?? [], frame, size.width, size.height);
@@ -633,6 +653,7 @@ export class OverlayUI {
       const shapeClass = this.bubbleShape === 'rectangle' ? 'rect' : 'oval';
       for (const box of boxes) {
         const bubble = el('div', { class: `bubble ${shapeClass}` });
+        this.addSourceMask(bubble, box);
         bubble.append(el('span', { class: 'bubble-text', text: box.translation ?? '' }));
         group.append(bubble);
       }
@@ -667,7 +688,7 @@ export class OverlayUI {
       entry.group.style.display = this.bubblesVisible ? 'block' : 'none';
       entry.boxes.forEach((box, i) => {
         const bubble = entry.group.children[i] as HTMLElement;
-        const text = bubble.firstElementChild as HTMLElement;
+        const text = bubble.querySelector('.bubble-text') as HTMLElement;
         Object.assign(bubble.style, { left: `${box.x - window.scrollX}px`, top: `${box.y - window.scrollY}px`,
           width: `${box.width}px`, height: `${box.height}px` });
         fitBubbleText(bubble, text, box.width, box.height);
@@ -690,7 +711,7 @@ export class OverlayUI {
 
     entry.boxes.forEach((box, i) => {
       const bubble = entry.group.children[i] as HTMLElement | undefined;
-      const text = bubble?.firstElementChild as HTMLElement | null;
+      const text = bubble?.querySelector('.bubble-text') as HTMLElement | null;
       if (!bubble || !text) return;
 
       const vp = mapBoxToViewport(box, imageRect, img.naturalWidth, img.naturalHeight);
@@ -890,17 +911,18 @@ function applyShape(shapeEl: SVGElement, shape: SelectionShape, start: Point, po
 function fitBubbleText(bubble: HTMLElement, text: HTMLElement, w: number, h: number) {
   const pad = 6;
   const availH = Math.max(14, h - pad * 2);
+  const availW = Math.max(10, w - pad * 2);
   let size = initialBubbleFontSize(h, pad);
   text.style.fontSize = `${size}px`;
   for (let guard = 0; guard < 14; guard += 1) {
-    if (text.scrollHeight <= availH) break;
+    if (text.scrollHeight <= availH && text.scrollWidth <= availW) break;
     size -= 1;
     if (size <= 8) break;
     text.style.fontSize = `${size}px`;
   }
   // Страховка от горизонтального переполнения неразрывным словом.
   bubble.style.overflowWrap = 'anywhere';
-  if (text.scrollWidth > Math.max(10, w - pad * 2) && size > 8) {
+  if (text.scrollWidth > availW && size > 8) {
     text.style.fontSize = `${Math.max(8, size - 1)}px`;
   }
 }
@@ -1025,11 +1047,22 @@ const OVERLAY_CSS = `
 }
 /* bubbleShape: 'rectangle' в настройках — скруглённый прямоугольник вместо овала. */
 .bubble.rect { border-radius: 6px; }
+/* Rectangular source erasure is separate from the chosen oval/rectangle frame.
+   The parent .bubbles stacking context keeps negative layers above the page. */
+.bubble.has-source-mask { overflow: visible; }
+.source-mask { position: absolute; inset: -2px; background: #fff; z-index: -1; }
+.bubble-frame { position: absolute; inset: -2px; border: 2px solid #111; border-radius: inherit; box-sizing: border-box; pointer-events: none; }
+.has-source-mask .bubble-text { position: relative; }
+.has-source-mask .bubble-text { max-height: 100%; overflow: hidden; }
+.source-details { margin-top: 6px; font-size: 12px; }
+.source-details summary { cursor: pointer; color: #2563eb; }
+.source-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.source-model { margin-top: 4px; color: #666; }
 .bubble-text {
   display: block; width: 100%;
   font: 13px/1.15 "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
   font-weight: 600; letter-spacing: .01em;
-  word-break: break-word; overflow-wrap: anywhere;
+  word-break: normal; overflow-wrap: normal;
 }
 .sel-hint {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);

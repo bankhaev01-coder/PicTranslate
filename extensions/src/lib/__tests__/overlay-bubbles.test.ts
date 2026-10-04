@@ -76,4 +76,31 @@ describe('OverlayUI page dialogue presentation', () => {
     expect(shadow.querySelectorAll('.viewport-bubbles')).toHaveLength(0);
     Object.defineProperty(window, 'innerWidth', { value: oldWidth, configurable: true });
   });
+  it('uses a separate source rectangle mask while preserving the chosen oval frame', () => {
+    const shadow = setup();
+    overlay.setStatus('img', 'done', { ...result, boxes: result.boxes!.map(b => ({ ...b, maskSource: true })) });
+    expect(shadow.querySelector('.bubble')?.classList.contains('oval')).toBe(true);
+    expect(shadow.querySelector('.bubble .source-mask')).not.toBeNull();
+    expect(shadow.querySelector('.bubble .bubble-text')?.textContent).toBe('one dialogue');
+    expect((shadow.querySelector('.bubble') as HTMLElement).style.left).toBe('5px');
+  });
+  it('shows OCR source and engine as inert text and replaces old diagnostics on retry', () => {
+    const shadow = setup();
+    overlay.setStatus('img', 'done', { ...result, source_text: '<img src=x onerror=alert(1)>' });
+    expect(shadow.querySelector('.source-text')?.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(shadow.querySelector('.source-details img')).toBeNull();
+    expect(shadow.querySelector('.source-model')?.textContent).toContain('test');
+    overlay.setStatus('img', 'done', { ...result, source_text: 'new OCR' });
+    expect(shadow.querySelectorAll('.source-details')).toHaveLength(1);
+    expect(shadow.querySelector('.source-text')?.textContent).toBe('new OCR');
+  });
+  it('renders source masks and source diagnostics for viewport captures as well', () => {
+    const shadow = setup(); const frame = readViewportFrame();
+    overlay.showViewportResult(frame, { width: frame.width, height: frame.height }, {
+      ...result, boxes: result.boxes!.map(b => ({ ...b, maskSource: true })) });
+    expect(shadow.querySelector('.viewport-bubbles .source-mask')).not.toBeNull();
+    expect(shadow.querySelector('.row .source-text')?.textContent).toBe('source');
+    expect(shadow.querySelector('.viewport-bubbles .bubble-text')?.textContent).toBe('one dialogue');
+  });
+
 });

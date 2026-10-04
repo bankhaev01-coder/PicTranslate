@@ -59,7 +59,9 @@
       "done": "Done",
       "error": "Error"
     },
-    "visibleArea": "Visible area translation"
+    "visibleArea": "Visible area translation",
+    "ocrSource": "Show recognized source text",
+    "resultModel": "Result engine"
   },
   "options": {
     "title": "Image Translator — settings",
