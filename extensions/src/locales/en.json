@@ -153,7 +153,13 @@
     "translateConcurrencyHint": "Number of images processed at once (1-5). 1 is recommended for local engine.",
     "translateConcurrencyRecommended": "1 is recommended for local engine to prevent UI freezes.",
     "groqPreset": "Configure Groq Vision (free tier)",
-    "groqPresetHint": "Sets the Custom AI endpoint and model. A different provider’s key is not copied. Enter your Groq key, grant endpoint access and save. Images are sent to Groq only when you request translation. Free tier is limited; manga quality is not guaranteed."
+    "groqPresetHint": "Sets the Custom AI endpoint and model. A different provider’s key is not copied. Enter your Groq key, grant endpoint access and save. Images are sent to Groq only when you request translation. Free tier is limited; manga quality is not guaranteed.",
+    "ocrPackMissing": "OCR resources for the selected languages are missing. Install an OCR-enabled build or run npm run vendor:ocr and rebuild.",
+    "ocrExternalReady": "OCR resources are ready. External text translation is selected; a local Opus-MT model is not required.",
+    "localMtMissing": "OCR is ready, but local translation models are missing. Select Google/another external translator or install the full offline pack.",
+    "offlinePackReady": "OCR and local translation resources are installed.",
+    "mtOptionalHint": "These local models are optional with an external translator. They are needed for fully offline translation or a local fallback.",
+    "ocrOnlyVendorHint": "Lightweight OCR build: npm run vendor:ocr, then npm run build. Images are recognized locally; recognized text is sent to the selected external translator."
   },
   "local": {
     "errPairMissing": "Model {{pair}} is missing — download it in settings",

@@ -18,13 +18,22 @@ type Probe = { state: 'idle' | 'testing' | 'ok' | 'fail'; detail?: string };
 export default function LocalSection({ settings, patch }: Props) {
   const { t } = useTranslation();
   const [vendor, setVendor] = useState<VendorManifest | null>(null);
+  const [vendorLoaded, setVendorLoaded] = useState(false);
   const [probe, setProbe] = useState<Probe>({ state: 'idle' });
 
   useEffect(() => {
-    void getVendorManifest().then(setVendor);
+    let active = true;
+    void getVendorManifest().then(manifest => {
+      if (active) { setVendor(manifest); setVendorLoaded(true); }
+    }).catch(() => { if (active) setVendorLoaded(true); });
+    return () => { active = false; };
   }, []);
 
-  const packReady = Boolean((vendor?.tesseract || settings.useNativeHost) && vendor?.pairs.length);
+  const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
+  const ocrReady = settings.useNativeHost || Boolean(vendor?.tesseract
+    && requestedLangs.some(lang => vendor.ocrLangs.includes(lang)));
+  const localMtReady = Boolean(vendor?.pairs.length);
+  const externalMtEnabled = settings.externalMt !== 'off';
   const isBundled = (pair: string) => Boolean(vendor?.pairs.includes(pair));
   /** Пока манифест не прочитан, чекбоксы не блокируем (статус неизвестен). */
   const isLangBundled = (id: string) => !vendor || Boolean(vendor.ocrLangs.includes(id));
@@ -136,10 +145,17 @@ export default function LocalSection({ settings, patch }: Props) {
             );
           })}
         </div>
-        <div className="hint">{t('options.mtHint')}</div>
+        <div className="hint">{t(externalMtEnabled ? 'options.mtOptionalHint' : 'options.mtHint')}</div>
       </div>
 
-      {!packReady && <div className="status fail">⚠ {t('options.offlinePackMissing')}</div>}
+      {vendorLoaded && (
+        <div className={`status resource-status ${ocrReady && (externalMtEnabled || localMtReady) ? 'ok' : 'fail'}`} role="status" aria-live="polite">
+          {!ocrReady ? `⚠ ${t('options.ocrPackMissing')}`
+            : externalMtEnabled ? `✓ ${t('options.ocrExternalReady')}`
+            : !localMtReady ? `⚠ ${t('options.localMtMissing')}`
+            : `✓ ${t('options.offlinePackReady')}`}
+        </div>
+      )}
 
       <div className="field">
         <label htmlFor="ocrMinConfidence">
@@ -234,7 +250,7 @@ export default function LocalSection({ settings, patch }: Props) {
       <div className="row">
         <button onClick={() => void clearCache()}>{t('options.clearResultCache')}</button>
       </div>
-      <div className="privacy">{t('options.vendorHint')}</div>
+      <div className="privacy">{t(externalMtEnabled ? 'options.ocrOnlyVendorHint' : 'options.vendorHint')}</div>
     </section>
   );
 }
