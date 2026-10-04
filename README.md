@@ -74,6 +74,10 @@ Backend FastAPI и Docker остаются **необязательными**: �
 - [`docs/README.dev.md`](docs/README.dev.md) — разработка, команды и troubleshooting.
 - [`docs/decisions/01-arch.md`](docs/decisions/01-arch.md) — архитектура, поток данных, автономный режим и roadmap.
 
+## Экспериментальный TeleOCR
+
+Необязательный сервис для повторного OCR выделенного фрагмента: [инструкция](experiments/teleocr_service/README.md). Работает в отдельном Python-окружении через серверный CustomAdapter; по умолчанию не включён. Качество на манге и скорость реальной модели ещё требуют проверки.
+
 ## Лицензия
 
 MIT. См. [LICENSE](LICENSE).
