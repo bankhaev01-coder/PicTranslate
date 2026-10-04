@@ -101,3 +101,13 @@ describe('assembleOcrResult', () => {
     expect(assembleOcrResult({}, 40, true)).toEqual({ text: '', boxes: [], confidence: 0 });
   });
 });
+
+describe('rejected OCR blocks', () => {
+  it('does not bring rejected full-page noise back through raw text', () => {
+    expect(assembleOcrResult({ text: 'GD) fake', confidence: 10,
+      blocks: [{ text: 'GD) fake', confidence: 10 }] }, 40, false).text).toBe('');
+  });
+  it('still preserves raw text when structured blocks are unavailable', () => {
+    expect(assembleOcrResult({ text: 'HELLO\nTHERE', confidence: 90 }, 40, false).text).toBe('HELLO THERE');
+  });
+});

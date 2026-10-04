@@ -242,7 +242,7 @@ export function assembleOcrResult(
     ? joined || blockLines.join('\n')
     : blockLines.length
       ? blockLines.join('\n')
-      : joined;
+      : data?.blocks?.length ? '' : joined;
 
   return { text, boxes, confidence };
 }

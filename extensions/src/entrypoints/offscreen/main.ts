@@ -14,6 +14,8 @@ import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
+import { groupDialogueBoxes, rasterSeparator, refineDialogueBoxes } from '@/lib/local/dialogueGroups';
+import { translateDialogueBoxes, dialogueTranslationText } from '@/lib/local/boxTranslation';
 import { parseImageOcr } from '@/lib/local/parseImage';
 import { sendNativeMessage } from '@/lib/native/nativeClient';
 import { MtClient } from '@/lib/local/mtClient';
@@ -52,10 +54,15 @@ browser.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
   return true;
 });
 
+let pipelineChain: Promise<unknown> = Promise.resolve();
+
 async function handle(msg: Msg): Promise<unknown> {
   switch (msg.type) {
-    case 'TRANSLATE_LOCAL':
-      return localPipeline(msg.settings, msg.dataUrl, msg.regionOnly);
+    case 'TRANSLATE_LOCAL': {
+      const task = pipelineChain.then(() => localPipeline(msg.settings, msg.dataUrl, msg.regionOnly));
+      pipelineChain = task.catch(() => undefined);
+      return task;
+    }
 
     case 'LOCAL_CACHE_CLEAR':
       await localCacheClear();
@@ -154,6 +161,37 @@ async function ocrFromDataUrl(
     }));
   }
 
+  if (!regionOnly && res.boxes.length) {
+    // Group in original-image coordinates. Inspect original pixels, not a
+    // thresholded pass, so panel/bubble borders can veto an unsafe merge.
+    const original = document.createElement('canvas');
+    original.width = img.naturalWidth;
+    original.height = img.naturalHeight;
+    const originalCtx = original.getContext('2d');
+    let barrier;
+    if (originalCtx) {
+      originalCtx.drawImage(img, 0, 0);
+      barrier = rasterSeparator(originalCtx.getImageData(0, 0, original.width, original.height).data,
+        original.width, original.height);
+    }
+    const grouped = groupDialogueBoxes(res.boxes, barrier);
+    // Limit refinement work on long pages; every remaining group is preserved.
+    const refined = await refineDialogueBoxes(grouped.slice(0, 16), async (box) => {
+      const crop = document.createElement('canvas');
+      const margin = 3;
+      const x = Math.max(0, Math.floor(box.x - margin));
+      const y = Math.max(0, Math.floor(box.y - margin));
+      crop.width = Math.max(1, Math.min(img.naturalWidth - x, Math.ceil(box.width + margin * 2)));
+      crop.height = Math.max(1, Math.min(img.naturalHeight - y, Math.ceil(box.height + margin * 2)));
+      const cropCtx = crop.getContext('2d');
+      if (!cropCtx) throw new Error('crop canvas unavailable');
+      cropCtx.drawImage(img, x, y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      return ocrFromDataUrl(crop.toDataURL('image/png'), langs, vendor,
+        { ...settings, ocrQuality: settings.ocrQuality === 'fast' ? 'fast' : 'balanced' }, true);
+    }, settings.ocrMinConfidence ?? 40);
+    res.boxes = [...refined, ...grouped.slice(16)];
+    res.text = res.boxes.map(box => box.text ?? '').filter(Boolean).join('\n');
+  }
   return res;
 }
 
@@ -170,7 +208,7 @@ async function localPipeline(
 
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   const hash = await sha256Hex(bytes);
-  // Ключ включает провайдера MT и настройки OCR: смена любого из них даёт
+  // Ключ включает провайдера MT и настройки OCR: с��ена любого из них даёт
   // другой ключ, и пользователь не получит чужой/устаревший результат.
   const { scope, cacheId } = buildLocalCacheKey({
     imageHash: hash,
@@ -232,7 +270,9 @@ async function localPipeline(
   if (!sourceText && !hasTesseractPack && !settings.useNativeHost) {
     return fail(i18n.t('local.errOcrPackMissing'));
   }
-  if (!vendor?.pairs.length) {
+  // External text MT does not require a downloaded local NMT model. OCR
+  // assets are still required unless a native/cloud region supplied the text.
+  if (!vendor?.pairs.length && settings.externalMt === 'off') {
     return fail(i18n.t('local.errModelPackMissing'));
   }
 
@@ -270,6 +310,10 @@ async function localPipeline(
       return fail(`OCR: ${String(e)}`);
     }
   }
+  if (!regionOnly && settings.useNativeHost && detectedBoxes.length) {
+    detectedBoxes = groupDialogueBoxes(detectedBoxes);
+    sourceText = detectedBoxes.map(box => box.text ?? '').join('\n');
+  }
   if (!sourceText) {
     return { source_text: '', translation: '', model: 'local', boxes: [], latency_ms: elapsed() };
   }
@@ -283,7 +327,7 @@ async function localPipeline(
 
   // 2) Выбор направления MT
   const available = listPairs().map((p) => p.id);
-  const downloaded = vendor.pairs;
+  const downloaded = vendor?.pairs ?? [];
   const pick = pickPair(
     {
       sourceLang: settings.sourceLang,
@@ -319,7 +363,7 @@ async function localPipeline(
 
   if (!pick.pair) {
     if (externalFirst && externalError) {
-      // Внешний уже пробовали и он упал, локальной пары тоже нет — показываем причину.
+      // Внешний уже пробовали и он упал, локальной пары тоже нет — показывае�� причину.
       return fail(externalError, sourceText);
     }
     if (!externalFirst && settings.externalMt !== 'off') {
@@ -339,31 +383,17 @@ async function localPipeline(
   }
 
   try {
-    const chunks = chunkText(sourceText);
-    const parts: string[] = [];
-    for (const chunk of chunks) {
-      parts.push(await mt.translate(pick.pair, chunk));
-    }
-    const fullTranslation = parts.join('\n');
-
-    // Переводим текст в боксах, чтобы пузыри речи отображали перевод
-    const translatedBoxes: Box[] = [];
-    for (const b of detectedBoxes) {
-      const boxText = (b.text ?? '').trim();
-      if (!boxText) continue;
-      try {
-        const trans = await mt.translate(pick.pair, boxText);
-        translatedBoxes.push({
-          ...b,
-          translation: trans,
-        });
-      } catch {
-        translatedBoxes.push({
-          ...b,
-          translation: fullTranslation, // фолбэк на общий перевод
-        });
-      }
-    }
+    const translateText = async (text: string) => {
+      const parts: string[] = [];
+      for (const chunk of chunkText(text)) parts.push(await mt.translate(pick.pair!, chunk));
+      return parts.join('\n');
+    };
+    const translatedBoxes = await translateDialogueBoxes(detectedBoxes, translateText);
+    // With regions, translate each dialogue once; the panel is assembled from
+    // those same translations rather than doing an extra whole-page request.
+    const fullTranslation = detectedBoxes.length
+      ? dialogueTranslationText(translatedBoxes) : await translateText(sourceText);
+    if (detectedBoxes.length && !fullTranslation) throw new Error('No dialogue could be translated');
 
     const result: TranslateResult = {
       source_text: sourceText,
@@ -373,7 +403,10 @@ async function localPipeline(
       boxes: translatedBoxes,
       latency_ms: elapsed(),
     };
-    await localCacheSet(scope, cacheId, result);
+    // A partial failure must be retryable, not frozen in the seven-day cache.
+    if (!result.boxes?.some(box => !(box.translation ?? '').trim())) {
+      await localCacheSet(scope, cacheId, result);
+    }
     return result;
   } catch (e) {
     if (!externalFirst && settings.externalMt !== 'off') {
@@ -419,27 +452,15 @@ async function externalTranslate(
   const provider = externalProvider(settings);
   const source = settings.sourceLang === 'auto' ? 'auto' : from;
   try {
-    const { translation, detected: extDetected } = await translateLongText(sourceText, source, to, {
-      ...externalMtOptions(settings),
-    });
-    if (!translation.trim()) {
-      return {
-        source_text: sourceText,
-        translation: '',
-        model: `external:${provider}:${from}-${to}`,
-        latency_ms: elapsed(),
-        error: i18n.t('local.errExternalFailed'),
-      };
-    }
-    // Каждый пузырь переводим отдельно (как на локальном пути), чтобы в пузырях
-    // речи был свой текст; при сбое падаем на общий перевод.
-    const boxes = await translateBoxesExternal(
-      detectedBoxes,
-      settings,
-      source,
-      to,
-      translation.trim(),
-    );
+    let extDetected: string | undefined;
+    const translateText = async (text: string) => {
+      const response = await translateLongText(text, source, to, externalMtOptions(settings));
+      extDetected ??= response.detected;
+      return response.translation;
+    };
+    const boxes = await translateDialogueBoxes(detectedBoxes, translateText);
+    const translation = detectedBoxes.length ? dialogueTranslationText(boxes) : await translateText(sourceText);
+    if (!translation.trim()) throw new Error('No dialogue could be translated');
     const result: TranslateResult = {
       source_text: sourceText,
       translation,
@@ -448,7 +469,10 @@ async function externalTranslate(
       boxes,
       latency_ms: elapsed(),
     };
-    await localCacheSet(scope, cacheId, result);
+    // A partial failure must be retryable, not frozen in the seven-day cache.
+    if (!result.boxes?.some(box => !(box.translation ?? '').trim())) {
+      await localCacheSet(scope, cacheId, result);
+    }
     return result;
   } catch (e) {
     return {
@@ -459,29 +483,6 @@ async function externalTranslate(
       error: `${i18n.t('local.errExternalFailed')}: ${String((e as Error).message ?? e)}`,
     };
   }
-}
-
-/** Перевод текста каждого бокса через внешний сервис с фолбэком на общий перевод. */
-async function translateBoxesExternal(
-  boxes: Box[],
-  settings: LocalEngineSettings,
-  source: string,
-  target: string,
-  fullTranslation: string,
-): Promise<Box[]> {
-  const out: Box[] = [];
-  const options = externalMtOptions(settings);
-  for (const b of boxes) {
-    const boxText = (b.text ?? '').trim();
-    if (!boxText) continue;
-    try {
-      const { translation } = await translateLongText(boxText, source, target, options);
-      out.push({ ...b, translation: translation.trim() || fullTranslation });
-    } catch {
-      out.push({ ...b, translation: fullTranslation });
-    }
-  }
-  return out;
 }
 
 /** Направление для внешнего MT по той же эвристике письма, что и pickPair. */
