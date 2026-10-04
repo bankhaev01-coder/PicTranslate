@@ -10,6 +10,7 @@ import type {
 } from './types';
 import { boundsOf, initialBubbleFontSize, lassoPathData, mapBoxToViewport, regionKey } from './selection';
 import i18n from './i18n';
+import { readViewportFrame, sameViewportSize, snapshotBoxesToDocument, type ViewportFrame } from './viewportTranslation';
 
 export interface OverlayCallbacks {
   onTranslate: (images: PageImage[]) => void;
@@ -48,6 +49,7 @@ interface Row {
 interface BubbleEntry {
   group: HTMLElement;
   boxes: Box[];
+  snapshotFrame?: ViewportFrame;
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -307,8 +309,13 @@ export class OverlayUI {
     }
     if (status === 'done' || status === 'error') this.setProgress(done, total);
 
-    if (result && !result.error && this.labelsVisible) {
-      this.showLabel(imageId, result.translation);
+    if (result && !result.error) {
+      this.showBubbles(imageId, result.boxes ?? []);
+      const hasBubbles = this.bubbles.has(imageId);
+      this.labels.get(imageId)?.remove();
+      this.labels.delete(imageId);
+      // Never put the same whole-page text on top of the image AND in bubbles.
+      if (!hasBubbles) this.showLabel(imageId, result.translation);
     }
   }
 
@@ -363,6 +370,7 @@ export class OverlayUI {
     label.textContent = text;
     label.dataset.imageId = imageId;
     this.positionLabel(label, imageId);
+    if (!this.labelsVisible) label.style.display = 'none';
   }
 
   private positionLabel(label: HTMLElement, imageId: string) {
@@ -585,7 +593,8 @@ export class OverlayUI {
    */
   showBubbles(imageId: string, boxes: Box[]) {
     this.clearBubbles(imageId);
-    const withText = boxes.filter((b) => (b.translation ?? '').trim().length > 0);
+    const withText = boxes.filter((b) => (b.translation ?? '').trim().length > 0
+      && [b.x, b.y, b.width, b.height].every(Number.isFinite) && b.width > 0 && b.height > 0);
     if (!withText.length) return;
     // bubbleShape: 'none' — пузыри не рисуем, перевод остаётся только на плашках.
     if (this.bubbleShape === 'none') return;
@@ -605,6 +614,36 @@ export class OverlayUI {
     this.positionBubbles(imageId);
   }
 
+  /** Display a captured viewport in document coordinates; no giant image label. */
+  showViewportResult(frame: ViewportFrame, size: { width: number; height: number }, result: TranslateResult) {
+    const id = 'viewport-snapshot';
+    this.clearBubbles(id);
+    this.rows.get(id)?.root.remove();
+    const root = el('div', { class: 'row' });
+    const body = el('div', { class: 'body' });
+    const statusEl = el('div', { class: 'status done', text: i18n.t('overlay.visibleArea') });
+    const textEl = el('div', { class: 'text', text: result.translation || i18n.t('overlay.noText') });
+    body.append(statusEl, textEl);
+    root.append(body);
+    this.listEl.prepend(root);
+    this.rows.set(id, { root, statusEl, textEl });
+    const boxes = snapshotBoxesToDocument(result.boxes ?? [], frame, size.width, size.height);
+    if (boxes.length && this.bubbleShape !== 'none') {
+      const group = el('div', { class: 'bubbles viewport-bubbles' });
+      const shapeClass = this.bubbleShape === 'rectangle' ? 'rect' : 'oval';
+      for (const box of boxes) {
+        const bubble = el('div', { class: `bubble ${shapeClass}` });
+        bubble.append(el('span', { class: 'bubble-text', text: box.translation ?? '' }));
+        group.append(bubble);
+      }
+      this.shadow.append(group);
+      this.bubbles.set(id, { group, boxes, snapshotFrame: frame });
+      this.positionBubbles(id);
+    }
+    this.panel.style.display = '';
+    this.panelFab.hidden = true;
+  }
+
   /** Убрать пузыри одного изображения (или всех, если id не задан). */
   clearBubbles(imageId?: string) {
     if (imageId) {
@@ -620,6 +659,21 @@ export class OverlayUI {
     const entry = this.bubbles.get(imageId);
     if (!entry) return;
 
+    if (entry.snapshotFrame) {
+      if (!sameViewportSize(entry.snapshotFrame, readViewportFrame())) {
+        this.clearBubbles(imageId);
+        return;
+      }
+      entry.group.style.display = this.bubblesVisible ? 'block' : 'none';
+      entry.boxes.forEach((box, i) => {
+        const bubble = entry.group.children[i] as HTMLElement;
+        const text = bubble.firstElementChild as HTMLElement;
+        Object.assign(bubble.style, { left: `${box.x - window.scrollX}px`, top: `${box.y - window.scrollY}px`,
+          width: `${box.width}px`, height: `${box.height}px` });
+        fitBubbleText(bubble, text, box.width, box.height);
+      });
+      return;
+    }
     const img = document.querySelector<HTMLImageElement>(`img[data-translate-ext-id="${imageId}"]`);
     if (!img || !img.naturalWidth || !img.naturalHeight) {
       entry.group.style.display = 'none';

@@ -22,7 +22,7 @@
     "imagesFound": "Images found: {{count}}",
     "noImages": "No suitable images found on this page",
     "notSupported": "This page does not allow scripting",
-    "screenshotHint": "Translates the currently visible part of the tab",
+    "screenshotHint": "Translating the snapshot; results will appear on the page. Do not scroll during capture.",
     "clearOverlay": "Hide translation overlay",
     "overlayCleared": "Translation overlay hidden"
   },
@@ -58,7 +58,8 @@
       "working": "Translating…",
       "done": "Done",
       "error": "Error"
-    }
+    },
+    "visibleArea": "Visible area translation"
   },
   "options": {
     "title": "Image Translator — settings",
@@ -150,7 +151,9 @@
     "ocrMinConfidenceHint": "Minimum confidence level (0-100) for text boxes and speech bubbles. Default: 40.",
     "translateConcurrency": "Concurrent translations",
     "translateConcurrencyHint": "Number of images processed at once (1-5). 1 is recommended for local engine.",
-    "translateConcurrencyRecommended": "1 is recommended for local engine to prevent UI freezes."
+    "translateConcurrencyRecommended": "1 is recommended for local engine to prevent UI freezes.",
+    "groqPreset": "Configure Groq Vision (free tier)",
+    "groqPresetHint": "Sets the Custom AI endpoint and model. A different provider’s key is not copied. Enter your Groq key, grant endpoint access and save. Images are sent to Groq only when you request translation. Free tier is limited; manga quality is not guaranteed."
   },
   "local": {
     "errPairMissing": "Model {{pair}} is missing — download it in settings",

@@ -87,6 +87,7 @@ export default function App() {
         ...(tab?.id != null ? { tabId: tab.id } : {}),
       });
       setShot(res);
+      if (!res.error) window.close();
     } finally {
       setBusy(false);
     }

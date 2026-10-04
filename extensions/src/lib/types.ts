@@ -255,7 +255,8 @@ export type ContentMsg = { type: 'SCAN_IMAGES' } | { type: 'CLEAR_OVERLAY' }
    * областей и подписи пузырей — это наш UI, в скриншот (и дальше в OCR/vision)
    * он попадать не должен.
    */
-  | { type: 'SET_UI_HIDDEN'; hidden: boolean };
+  | { type: 'SET_UI_HIDDEN'; hidden: boolean }
+  | { type: 'TRANSLATE_VIEWPORT' };
 
 /** Ответ контент-скрипта на SCAN_IMAGES. */
 export interface ScanImagesResponse {

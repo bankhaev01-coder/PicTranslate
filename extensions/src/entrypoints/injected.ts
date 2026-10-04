@@ -6,6 +6,7 @@ import { runConcurrent } from '@/lib/queue';
 import { createJobQueue } from '@/lib/jobQueue';
 import { OverlayUI } from '@/lib/overlay';
 import { regionKey } from '@/lib/selection';
+import { readViewportFrame, dataUrlImageSize, translateViewport } from '@/lib/viewportTranslation';
 import { cropRegion, fetchImageBlob, scanImages, type ImageFetchResult } from '@/lib/scanner';
 import { blobToDataUrl, sendToBackground } from '@/lib/messaging';
 import type {
@@ -41,6 +42,8 @@ export default defineUnlistedScript(() => {
   let batchToken = 0;
   /** Изображения текущей сессии — для пересчёта прогресса при удалении. */
   let sessionImages: PageImage[] = [];
+  let viewportRequest = 0;
+  let imageRequest = 0;
 
   /** Прогресс «переведено X из Y» без учёта убранных из очереди картинок. */
   function syncProgress() {
@@ -59,6 +62,10 @@ export default defineUnlistedScript(() => {
       scanAndShow()
         .then((images) => sendResponse({ ok: true, count: images.length }))
         .catch((e) => sendResponse({ ok: false, error: String(e) }));
+      return true;
+    }
+    if (msg.type === 'TRANSLATE_VIEWPORT') {
+      translateVisibleArea().then(sendResponse).catch(e => sendResponse(failedResult(e)));
       return true;
     }
     if (msg.type === 'CLEAR_OVERLAY') {
@@ -84,6 +91,8 @@ export default defineUnlistedScript(() => {
     const images = scanImages(settings.minImageSize);
 
     closeOverlay();
+    viewportRequest++;
+    imageRequest++;
     removed.clear();
     doneIds.clear();
     translatedRegions.clear();
@@ -134,7 +143,10 @@ export default defineUnlistedScript(() => {
 
   /* ── перевод всех изображений (очередь с параллельностью из настроек) ── */
   async function translateAll(images: PageImage[]) {
+    const request = ++imageRequest;
+    const owner = overlay;
     const settings = await getSettings();
+    const isCurrent = () => request === imageRequest && owner === overlay;
     /** Активные = не убранные пользователем из очереди. */
     const activeIds = () => images.filter((img) => !removed.has(img.id));
     const progress = () => ({
@@ -143,6 +155,7 @@ export default defineUnlistedScript(() => {
     });
 
     const finish = (img: PageImage, result: TranslateResult) => {
+      if (!isCurrent()) return;
       doneIds.add(img.id);
       if (removed.has(img.id)) {
         syncProgress();
@@ -156,7 +169,7 @@ export default defineUnlistedScript(() => {
       images,
       settings.translateConcurrency ?? 1,
       async (img) => {
-        if (removed.has(img.id)) return;
+        if (!isCurrent() || removed.has(img.id)) return;
         const { done, total } = progress();
         overlay?.setStatus(img.id, 'working', undefined, done, total);
         finish(img, await translateOne(img));
@@ -165,7 +178,7 @@ export default defineUnlistedScript(() => {
       // и продолжаем переводить остальные.
       (img, _index, error) => finish(img, failedResult(error)),
       // Убранные из очереди картинки не запускаются и не считаются ошибками.
-      (img) => removed.has(img.id),
+      (img) => !isCurrent() || removed.has(img.id),
     );
   }
 
@@ -197,9 +210,24 @@ export default defineUnlistedScript(() => {
       imageId: img.id,
       dataUrl,
     });
-    // Комикс-пузыри — только если картинку не убрали из очереди за время запроса.
-    if (res.boxes?.length && !removed.has(img.id)) overlay?.showBubbles(img.id, res.boxes);
     return res;
+  }
+
+  async function translateVisibleArea(): Promise<TranslateResult> {
+    if (!overlay) await scanAndShow();
+    const request = ++viewportRequest;
+    const owner = overlay;
+    const generation = imageRequest;
+    return translateViewport({
+      frame: readViewportFrame,
+      capture: captureSerialized,
+      size: dataUrlImageSize,
+      translate: dataUrl => sendToBackground<TranslateResult>({
+        type: 'TRANSLATE_DATA_URL', imageId: `viewport-${request}`, dataUrl, regionOnly: false,
+      }),
+      isCurrent: () => request === viewportRequest && generation === imageRequest && overlay === owner,
+      render: (frame, size, result) => owner?.showViewportResult(frame, size, result),
+    });
   }
 
   /**

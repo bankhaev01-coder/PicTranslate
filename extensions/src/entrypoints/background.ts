@@ -46,7 +46,7 @@ export default defineBackground(() => {
 
 async function handle(
   msg: Msg,
-  sender: { tab?: { windowId?: number } },
+  sender: { tab?: { id?: number; windowId?: number } },
 ): Promise<unknown> {
   switch (msg.type) {
     case 'PING':
@@ -77,30 +77,19 @@ async function handle(
       return translateByEngine(msg.dataUrl, settings, msg.regionOnly ?? false);
     }
 
-    case 'CAPTURE_VISIBLE':
+    case 'CAPTURE_VISIBLE': {
+      if (sender.tab?.id != null) {
+        const active = await browser.tabs.query({ active: true, windowId: sender.tab.windowId });
+        if (active[0]?.id !== sender.tab.id) return { error: 'Tab is no longer active; capture cancelled' };
+      }
       return captureVisible(sender.tab?.windowId);
+    }
 
     case 'CAPTURE_AND_TRANSLATE': {
-      // Скрываем оверлей вкладки на время снимка: панель, контуры областей и
-      // подписи пузырей — наша разметка, в кадр она попадать не должна.
-      // Если контент-скрипт не внедрён — просто снимаем как есть.
-      if (msg.tabId != null) await setTabUiHidden(msg.tabId, true);
-      try {
-        const cap = await captureVisible(sender.tab?.windowId);
-        if (!cap.dataUrl) {
-          return {
-            source_text: '',
-            translation: '',
-            model: 'n/a',
-            latency_ms: 0,
-            error: cap.error ?? 'capture failed',
-          } satisfies TranslateResult;
-        }
-        const settings = await getSettings();
-        return translateByEngine(cap.dataUrl, settings, false);
-      } finally {
-        if (msg.tabId != null) await setTabUiHidden(msg.tabId, false);
-      }
+      if (msg.tabId == null) return { source_text: '', translation: '', model: 'n/a', latency_ms: 0,
+        error: 'No active tab for screenshot translation' } satisfies TranslateResult;
+      await ensureContentScript(msg.tabId);
+      return browser.tabs.sendMessage(msg.tabId, { type: 'TRANSLATE_VIEWPORT' } satisfies ContentMsg);
     }
 
     case 'CHECK_NATIVE_HOST':
@@ -199,19 +188,6 @@ async function captureVisible(windowId?: number): Promise<CaptureVisibleResponse
     return { dataUrl };
   } catch (e) {
     return { error: `captureVisibleTab failed: ${String(e)}` };
-  }
-}
-
-/**
- * Скрыть/показать оверлей вкладки перед скриншотом. Ошибки молча игнорируются:
- * если контент-скрипт не внедрён или вкладка закрылась, снимок просто
- * делается с текущей разметкой.
- */
-async function setTabUiHidden(tabId: number, hidden: boolean): Promise<void> {
-  try {
-    await browser.tabs.sendMessage(tabId, { type: 'SET_UI_HIDDEN', hidden } satisfies ContentMsg);
-  } catch {
-    /* контент-скрипт не внедрён — не страшно */
   }
 }
 
