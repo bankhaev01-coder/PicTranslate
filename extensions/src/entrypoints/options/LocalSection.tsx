@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import { listOcrLangs, listPairs } from '@/lib/local/registry';
 import { getVendorManifest } from '@/lib/local/vendor';
+import { downloadOcrModel, listDownloadedOcrModels, removeOcrModel, resolveOcrLanguages, OCR_MODEL_ORIGIN, type InstalledOcrModel } from '@/lib/local/ocrModels';
 import { sendToBackground } from '@/lib/messaging';
 import type { Settings } from '@/lib/types';
 import type { VendorManifest } from '@/lib/local/registry';
@@ -19,24 +20,46 @@ export default function LocalSection({ settings, patch }: Props) {
   const { t } = useTranslation();
   const [vendor, setVendor] = useState<VendorManifest | null>(null);
   const [vendorLoaded, setVendorLoaded] = useState(false);
+  const [installed, setInstalled] = useState<InstalledOcrModel[]>([]);
+  const [modelBusy, setModelBusy] = useState<string | null>(null);
+  const [modelError, setModelError] = useState('');
   const [probe, setProbe] = useState<Probe>({ state: 'idle' });
 
   useEffect(() => {
     let active = true;
-    void getVendorManifest().then(manifest => {
-      if (active) { setVendor(manifest); setVendorLoaded(true); }
+    void Promise.all([getVendorManifest(), listDownloadedOcrModels()]).then(([manifest, models]) => {
+      if (active) { setVendor(manifest); setInstalled(models); setVendorLoaded(true); }
     }).catch(() => { if (active) setVendorLoaded(true); });
     return () => { active = false; };
   }, []);
 
   const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
-  const ocrReady = settings.useNativeHost || Boolean(vendor?.tesseract
-    && requestedLangs.some(lang => vendor.ocrLangs.includes(lang)));
+  let languagesReady = false;
+  try { languagesReady = resolveOcrLanguages(requestedLangs, vendor?.ocrLangs ?? [], settings.sourceLang).length > 0; } catch { /* readiness warning below */ }
+  const ocrReady = settings.useNativeHost || Boolean(vendor?.tesseract && languagesReady);
   const localMtReady = Boolean(vendor?.pairs.length);
   const externalMtEnabled = settings.externalMt !== 'off';
   const isBundled = (pair: string) => Boolean(vendor?.pairs.includes(pair));
   /** Пока манифест не прочитан, чекбоксы не блокируем (статус неизвестен). */
   const isLangBundled = (id: string) => !vendor || Boolean(vendor.ocrLangs.includes(id));
+
+  const manageModel = async (id: string, remove: boolean) => {
+    setModelBusy(id); setModelError('');
+    try {
+      if (remove) {
+        await removeOcrModel(id);
+      } else {
+        // Keep request directly on the click path: Chrome requires a user gesture.
+        const granted = await browser.permissions.request({ origins: [OCR_MODEL_ORIGIN] });
+        if (!granted) throw new Error(t('options.ocrDownloadPermissionDenied'));
+        await downloadOcrModel(id);
+      }
+      const [manifest, models] = await Promise.all([getVendorManifest(), listDownloadedOcrModels()]);
+      setVendor(manifest); setInstalled(models);
+      // Installing never silently changes the user's OCR selection.
+    } catch (error) { setModelError(String((error as Error)?.message ?? error)); }
+    finally { setModelBusy(null); }
+  };
 
   const clearCache = async () => {
     await browser.runtime.sendMessage({ type: 'LOCAL_CACHE_CLEAR', target: 'offscreen' });
@@ -64,27 +87,35 @@ export default function LocalSection({ settings, patch }: Props) {
           {listOcrLangs().map((l) => {
             const bundled = isLangBundled(l.id);
             return (
-              <label key={l.id} className="checkbox">
-                <input
-                  type="checkbox"
-                  disabled={!bundled}
-                  checked={settings.ocrLangs.includes(l.id)}
-                  onChange={(e) => {
-                    const next = e.target.checked
-                      ? [...settings.ocrLangs, l.id]
-                      : settings.ocrLangs.filter((x) => x !== l.id);
-                    patch({ ocrLangs: next.length ? next : ['eng'] });
-                  }}
-                />
-                {l.label}{' '}
+              <div key={l.id} className="ocr-model-row">
+                <label className="checkbox">
+                  <input type="checkbox" disabled={!vendorLoaded || !bundled || modelBusy !== null}
+                    checked={settings.ocrLangs.includes(l.id)}
+                    onChange={(e) => {
+                      const next = e.target.checked ? [...settings.ocrLangs, l.id] : settings.ocrLangs.filter(x => x !== l.id);
+                      patch({ ocrLangs: next.length ? next : ['eng'] });
+                    }} />
+                  {l.label}
+                </label>
                 <span className="hint">
-                  ≈{l.approxMB} МБ{bundled ? '' : ` · ${t('options.ocrLangNotBundled')}`}
+                  {(vendor?.bundledOcrLangs ?? vendor?.ocrLangs ?? []).includes(l.id) ? t('options.modelBundled')
+                    : installed.some(model => model.id === l.id) ? t('options.ocrModelInstalled') : t('options.modelNotBundled')}
                 </span>
-              </label>
+                <button type="button" disabled={!vendorLoaded || modelBusy !== null}
+                  hidden={(vendor?.bundledOcrLangs ?? vendor?.ocrLangs ?? []).includes(l.id)}
+                  aria-label={`${t(installed.some(model => model.id === l.id) ? 'options.ocrModelRemove' : 'options.ocrModelDownload')}: ${l.label}`}
+                  onClick={() => void manageModel(l.id, installed.some(model => model.id === l.id))}>
+                  {modelBusy === l.id ? t('options.ocrModelWorking')
+                    : t(installed.some(model => model.id === l.id) ? 'options.ocrModelRemove' : 'options.ocrModelDownload')}
+                </button>
+              </div>
             );
           })}
         </div>
         <div className="hint">{t('options.ocrLangsHint')}</div>
+        <div className="hint">{t('options.ocrDownloadHint')}</div>
+        {modelBusy && <div role="status" aria-live="polite">{t('options.ocrModelWorking')} — {modelBusy}</div>}
+        {modelError && <div className="status fail" role="alert">{modelError}</div>}
       </div>
 
       <div className="field">

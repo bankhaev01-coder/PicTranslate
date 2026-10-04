@@ -8,6 +8,7 @@
 import i18n, { initI18n } from '@/lib/i18n';
 import { browser } from 'wxt/browser';
 import { getVendorManifest } from '@/lib/local/vendor';
+import { resolveOcrLanguages } from '@/lib/local/ocrModels';
 import { buildLocalCacheKey, localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
 import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
 import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
@@ -228,9 +229,6 @@ async function localPipeline(
     externalMtPriority: settings.externalMtPriority,
   });
 
-  const cached = await localCacheGet<TranslateResult>(scope, cacheId);
-  if (cached) return cached;
-
   const fail = (error: string, source = ''): TranslateResult => ({
     source_text: source,
     translation: '',
@@ -238,6 +236,14 @@ async function localPipeline(
     latency_ms: elapsed(),
     error,
   });
+
+  // Validate before result-cache lookup: removal/missing languages must not return an old success.
+  if (!settings.useNativeHost && !(regionOnly && settings.cloudOcr)) {
+    try { resolveOcrLanguages(settings.ocrLangs.length ? settings.ocrLangs : ['eng'], vendor?.ocrLangs ?? [], settings.sourceLang); }
+    catch (error) { return fail(`OCR: ${String((error as Error)?.message ?? error)}`); }
+  }
+  const cached = await localCacheGet<TranslateResult>(scope, cacheId);
+  if (cached) return cached;
 
   // 1) Облачный OCR выделенной области — способ uLanguage (backenster
   //    parseImage): сервер отдаёт строки без bbox, поэтому только regionOnly.
@@ -281,15 +287,15 @@ async function localPipeline(
 
   // 1.1) OCR (если текст не пришёл из облака) — либо встроенный tesseract-воркер, либо native host.
   const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
-  // Языковые пакеты, которых нет в офлайн-сборке, отбрасываем: иначе tesseract
-  // упадёт на 404 вместо понятной ошибки.
-  const bundledLangs = vendor?.ocrLangs ? new Set(vendor.ocrLangs) : null;
-  const langs = bundledLangs ? requestedLangs.filter((l) => bundledLangs.has(l)) : requestedLangs;
+  let langs = requestedLangs;
   if (!sourceText) {
     if (!langs.length && !settings.useNativeHost) {
       return fail(i18n.t('local.errOcrLangMissing', { langs: requestedLangs.join(', ') }));
     }
     try {
+      if (!settings.useNativeHost) {
+        langs = resolveOcrLanguages(requestedLangs, vendor?.ocrLangs ?? [], settings.sourceLang);
+      }
       if (settings.useNativeHost) {
         const native = await sendNativeMessage({ action: 'ocr', image_base64: dataUrl, langs });
         if (!native.ok) {

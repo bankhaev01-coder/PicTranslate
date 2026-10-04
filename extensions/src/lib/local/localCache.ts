@@ -2,7 +2,7 @@
  * Кеш результатов локального перевода (Cache Storage) — расширение-сторона
  * файлового кеша бэкенда. Ключ = sha256(изображение)+языки+движок+область.
  */
-export const OCR_PIPELINE_VERSION = 'v6-page-refinement';
+export const OCR_PIPELINE_VERSION = 'v7-installed-ocr-models';
 const CACHE_NAME = `te-local-results-${OCR_PIPELINE_VERSION}`;
 /** Общий префикс всех версий: clear сносит и устаревшие кэши пайплайна. */
 const CACHE_PREFIX = 'te-local-results-';

@@ -19,6 +19,8 @@ export interface VendorManifest {
   baseUrl: string;
   pairs: string[];
   ocrLangs: string[];
+  bundledOcrLangs?: string[];
+  ocrModelRevision?: string;
   /** worker/core/traineddata Tesseract входят в комплект */
   tesseract?: boolean;
   createdAt: string;

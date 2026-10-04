@@ -1,5 +1,6 @@
 import { createWorker, OEM, PSM } from 'tesseract.js';
 import type { VendorManifest } from './registry';
+import { seedDownloadedOcrModels } from './ocrModels';
 import type { Box, OcrQuality } from '../types';
 import {
   binarizeOtsuInPlace,
@@ -99,11 +100,13 @@ function isSimdAbort(e: unknown): boolean {
  * вместо молчаливого отката на CDN.
  */
 export async function ensureOcr(langs: string[], vendor: VendorManifest | null): Promise<TesseractWorker> {
-  const key = [...langs].sort().join('+') || 'eng';
+  const languageKey = [...langs].sort().join('+') || 'eng';
+  const key = `${languageKey}|${vendor?.ocrModelRevision ?? ''}`;
   if (worker && langsKey === key && workerCoreIdx === coreIdx) return worker;
   await dropWorker();
 
   const options: Record<string, unknown> = {
+    cachePath: 'te-user-ocr',
     cacheMethod: 'write', // чтение+запись кеша traineddata в IndexedDB
     gzip: true,
   };
@@ -111,6 +114,8 @@ export async function ensureOcr(langs: string[], vendor: VendorManifest | null):
   if (!vendor?.tesseract || !vendor.baseUrl) {
     throw new Error('offline OCR asset pack is missing');
   }
+  if (langs.some(lang => !vendor.ocrLangs.includes(lang))) throw new Error('Selected OCR model is not installed');
+  await seedDownloadedOcrModels(langs);
   // Полностью офлайн: worker + сборки core + traineddata отдаются из расширения.
   options.workerBlobURL = false;
   options.workerPath = new URL('tesseract/worker.min.js', vendor.baseUrl).href;
@@ -124,7 +129,7 @@ export async function ensureOcr(langs: string[], vendor: VendorManifest | null):
   for (; coreIdx < CORE_FILES.length; coreIdx++) {
     options.corePath = new URL(`tesseract/${CORE_FILES[coreIdx]}`, vendor.baseUrl).href;
     try {
-      worker = await createWorker(key.split('+'), OEM.LSTM_ONLY, options);
+      worker = await createWorker(languageKey.split('+'), OEM.LSTM_ONLY, options);
       langsKey = key;
       workerCoreIdx = coreIdx;
       // Оптимизация параметров распознавания для комиксов и разреженного текста

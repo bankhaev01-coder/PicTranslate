@@ -1,15 +1,20 @@
 {
   "pairs": [
-    { "id": "en-ru", "model": "Xenova/opus-mt-en-ru", "approxMB": 77 },
-    { "id": "ru-en", "model": "Xenova/opus-mt-ru-en", "approxMB": 77 }
+    {"id": "en-ru", "model": "Xenova/opus-mt-en-ru", "approxMB": 77},
+    {"id": "ru-en", "model": "Xenova/opus-mt-ru-en", "approxMB": 77}
   ],
   "ocrLangs": [
-    { "id": "eng", "label": "English", "approxMB": 4 },
-    { "id": "rus", "label": "Русский", "approxMB": 6 },
-    { "id": "jpn", "label": "日本語", "approxMB": 13 },
-    { "id": "jpn_vert", "label": "日本語 (верт.)", "approxMB": 2 },
-    { "id": "chi_sim", "label": "简体中文", "approxMB": 19, "optional": true },
-    { "id": "kor", "label": "한국어", "approxMB": 7, "optional": true }
+    {"id": "eng", "label": "English", "approxMB": 4},
+    {"id": "rus", "label": "Русский", "approxMB": 6},
+    {"id": "jpn", "label": "日本語", "approxMB": 13},
+    {"id": "jpn_vert", "label": "日本語 (верт.)", "approxMB": 2},
+    {"id": "chi_sim", "label": "简体中文", "approxMB": 19, "optional": true},
+    {"id": "kor", "label": "한국어", "approxMB": 7, "optional": true},
+    {"id": "chi_tra", "label": "繁體中文", "approxMB": 13, "optional": true},
+    {"id": "deu", "label": "Deutsch", "approxMB": 8, "optional": true},
+    {"id": "fra", "label": "Français", "approxMB": 4, "optional": true},
+    {"id": "spa", "label": "Español", "approxMB": 4, "optional": true},
+    {"id": "ita", "label": "Italiano", "approxMB": 4, "optional": true}
   ],
   "notes": "Single source of truth for scripts/vendor.mjs and the extension. Keep in sync. optional:true — качаются только при TRANSLATE_VENDOR_EXTRA=1."
 }

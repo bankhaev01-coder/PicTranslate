@@ -2,7 +2,9 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ vendor: vi.fn() }));
+const mocks = vi.hoisted(() => ({ vendor: vi.fn(), list: vi.fn(), download: vi.fn(), remove: vi.fn(), permission: vi.fn(), patch: vi.fn() }));
+vi.mock('wxt/browser', () => ({ browser: { permissions: { request: mocks.permission } } }));
+vi.mock('@/lib/local/ocrModels', async original => ({ ...(await original<object>()), listDownloadedOcrModels: mocks.list, downloadOcrModel: mocks.download, removeOcrModel: mocks.remove }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/lib/local/vendor', () => ({ getVendorManifest: mocks.vendor }));
 import LocalSection from '../LocalSection';
@@ -12,11 +14,11 @@ const ocrPack = { version: 1, baseUrl: '', pairs: [], ocrLangs: ['eng', 'rus'], 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: ReturnType<typeof createRoot> | undefined;
 let container: HTMLElement;
-beforeEach(() => { vi.clearAllMocks(); mocks.vendor.mockResolvedValue(ocrPack); });
+beforeEach(() => { vi.clearAllMocks(); mocks.vendor.mockResolvedValue(ocrPack); mocks.list.mockResolvedValue([]); mocks.permission.mockResolvedValue(true); mocks.download.mockResolvedValue(undefined); mocks.remove.mockResolvedValue(undefined); });
 afterEach(() => { if (root) act(() => root?.unmount()); document.body.replaceChildren(); });
 async function render(patch: Partial<Settings> = {}) {
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  await act(async () => { root!.render(<LocalSection settings={{ ...DEFAULT_SETTINGS, ocrLangs: ['eng'], ...patch }} patch={vi.fn()} />); });
+  await act(async () => { root!.render(<LocalSection settings={{ ...DEFAULT_SETTINGS, ocrLangs: ['eng'], ...patch }} patch={mocks.patch} />); });
   return container.querySelector('.resource-status') as HTMLElement | null;
 }
 
@@ -54,5 +56,33 @@ describe('LocalSection OCR-only pack readiness', () => {
     mocks.vendor.mockImplementation(() => new Promise(() => {}));
     expect(await render({ externalMt: 'google' })).toBeNull();
     expect(container.textContent).not.toContain('options.offlinePackMissing');
+  });
+});
+
+describe('OCR model controls', () => {
+  const japaneseButton = () => container.querySelector('button[aria-label="options.ocrModelDownload: 日本語"]') as HTMLButtonElement;
+  it('offers on-demand downloads but never starts them on render', async () => {
+    await render(); expect(japaneseButton()).not.toBeNull();
+    expect(mocks.download).not.toHaveBeenCalled(); expect(mocks.permission).not.toHaveBeenCalled();
+  });
+  it('requests only the model host, installs on click, and leaves language selection unchanged', async () => {
+    await render();
+    mocks.list.mockResolvedValue([{ id: 'jpn', bytes: 1024, installedAt: 'test' }]);
+    mocks.vendor.mockResolvedValue({ ...ocrPack, ocrLangs: ['eng', 'rus', 'jpn'], bundledOcrLangs: ['eng', 'rus'] });
+    await act(async () => japaneseButton().click());
+    expect(mocks.permission).toHaveBeenCalledWith({ origins: ['https://tessdata.projectnaptha.com/*'] });
+    expect(mocks.download).toHaveBeenCalledExactlyOnceWith('jpn');
+    expect(mocks.patch).not.toHaveBeenCalled();
+    expect(container.querySelector('button[aria-label="options.ocrModelRemove: 日本語"]')).not.toBeNull();
+  });
+  it('does not download after permission denial and shows a retryable error', async () => {
+    mocks.permission.mockResolvedValue(false); await render();
+    await act(async () => japaneseButton().click());
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('options.ocrDownloadPermissionDenied');
+    expect(japaneseButton().disabled).toBe(false);
+  });
+  it('requires every selected model instead of accepting a partial language set', async () => {
+    expect((await render({ ocrLangs: ['eng', 'jpn'], externalMt: 'google' }))?.textContent).toBe('⚠ options.ocrPackMissing');
   });
 });

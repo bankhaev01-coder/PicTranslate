@@ -56,3 +56,9 @@ button:disabled { opacity: .6; cursor: default; }
 .model-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .model-name { min-width: 76px; font-weight: 600; }
 .model-row .status { min-width: 110px; font-size: 12px; }
+
+.ocr-model-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--border, #e6e5e3); }
+.ocr-model-row .checkbox { flex: 1 1 180px; }
+.ocr-model-row button { min-height: 44px; min-width: 88px; }
+.ocr-model-row button[hidden] { display: none; }
+@media (max-width: 480px) { .engine-row { flex-wrap: wrap; } .ocr-model-row { gap: 8px; } .ocr-model-row .hint { flex: 1 1 120px; } }

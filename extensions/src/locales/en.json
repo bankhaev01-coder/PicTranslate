@@ -101,7 +101,7 @@
     "nativeHostHint": "Requires the native host to be installed (native_host/install_host.bat) and Tesseract on PATH. Used by the autonomous engine instead of the in-browser OCR worker.",
     "nativeHostTest": "Test native host",
     "ocrLangs": "OCR languages",
-    "ocrLangsHint": "OCR language packs are included in the offline build and are not downloaded at runtime",
+    "ocrLangsHint": "Select installed OCR languages. Translation source language does not install models automatically. Missing selected models stop recognition.",
     "ocrLangNotBundled": "not in the bundle",
     "ocrQuality": "OCR quality",
     "ocrQualityFast": "Fast (1 pass)",
@@ -161,7 +161,13 @@
     "localMtMissing": "OCR is ready, but local translation models are missing. Select Google/another external translator or install the full offline pack.",
     "offlinePackReady": "OCR and local translation resources are installed.",
     "mtOptionalHint": "These local models are optional with an external translator. They are needed for fully offline translation or a local fallback.",
-    "ocrOnlyVendorHint": "Lightweight OCR build: npm run vendor:ocr, then npm run build. Images are recognized locally; recognized text is sent to the selected external translator."
+    "ocrOnlyVendorHint": "Lightweight OCR build: npm run vendor:ocr, then npm run build. Images are recognized locally; recognized text is sent to the selected external translator.",
+    "ocrModelDownload": "Download",
+    "ocrModelRemove": "Remove",
+    "ocrModelWorking": "Processing model…",
+    "ocrModelInstalled": "Downloaded · available offline",
+    "ocrDownloadHint": "OCR models download only when clicked, from tessdata.projectnaptha.com. No images are sent there. Select the language after installing; OCR then works offline. Translation models are separate. File sizes vary; insufficient storage causes a download error. For Japanese manga install jpn and jpn_vert.",
+    "ocrDownloadPermissionDenied": "Permission to access the model download site was not granted."
   },
   "local": {
     "errPairMissing": "Model {{pair}} is missing — download it in settings",

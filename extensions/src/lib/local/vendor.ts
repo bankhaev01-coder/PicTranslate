@@ -1,5 +1,6 @@
 import { browser } from 'wxt/browser';
 import type { VendorManifest } from './registry';
+import { listDownloadedOcrModels } from './ocrModels';
 
 let cached: VendorManifest | null | undefined;
 
@@ -8,7 +9,7 @@ let cached: VendorManifest | null | undefined;
  * Возвращает null, если public/vendor.json отсутствует; локальные вызывающие
  * должны падать явно, а не откатываться на CDN.
  */
-export async function getVendorManifest(baseUrl?: string): Promise<VendorManifest | null> {
+async function getBundledManifest(baseUrl?: string): Promise<VendorManifest | null> {
   if (cached !== undefined) return cached;
   try {
     // У типа WXT нет runtime.getURL, но в chrome.runtime он есть.
@@ -32,4 +33,16 @@ export async function getVendorManifest(baseUrl?: string): Promise<VendorManifes
 /** Тестовый шов: сбросить мемоизированный манифест. */
 export function _resetVendorCache(): void {
   cached = undefined;
+}
+
+/** Bundled manifest is immutable; installed models are refreshed across options/offscreen contexts. */
+export async function getVendorManifest(baseUrl?: string): Promise<VendorManifest | null> {
+  const bundled = await getBundledManifest(baseUrl);
+  if (!bundled) return null; // Downloaded data cannot replace the worker/core asset pack.
+  const installed = await listDownloadedOcrModels();
+  return { ...bundled,
+    ocrLangs: [...new Set([...bundled.ocrLangs, ...installed.map(model => model.id)])],
+    bundledOcrLangs: [...bundled.ocrLangs],
+    ocrModelRevision: installed.map(model => `${model.id}:${model.installedAt}`).join('|'),
+  };
 }
