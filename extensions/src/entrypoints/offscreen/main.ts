@@ -14,7 +14,8 @@ import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
-import { groupDialogueBoxes, rasterSeparator, refineDialogueBoxes } from '@/lib/local/dialogueGroups';
+import { groupDialogueBoxes, rasterSeparator } from '@/lib/local/dialogueGroups';
+import { lightTextBackdrop, refinementLanguages, refinePageDialogues } from '@/lib/local/pageOcr';
 import { translateDialogueBoxes, dialogueTranslationText } from '@/lib/local/boxTranslation';
 import { parseImageOcr } from '@/lib/local/parseImage';
 import { sendNativeMessage } from '@/lib/native/nativeClient';
@@ -169,14 +170,17 @@ async function ocrFromDataUrl(
     original.height = img.naturalHeight;
     const originalCtx = original.getContext('2d');
     let barrier;
+    let lightBackdrop: (box: Box) => boolean = () => false;
     if (originalCtx) {
       originalCtx.drawImage(img, 0, 0);
-      barrier = rasterSeparator(originalCtx.getImageData(0, 0, original.width, original.height).data,
-        original.width, original.height);
+      const rgba = originalCtx.getImageData(0, 0, original.width, original.height).data;
+      barrier = rasterSeparator(rgba, original.width, original.height);
+      lightBackdrop = lightTextBackdrop(rgba, original.width, original.height);
     }
     const grouped = groupDialogueBoxes(res.boxes, barrier);
+    const cropLangs = refinementLanguages(langs, res.text, settings.sourceLang);
     // Limit refinement work on long pages; every remaining group is preserved.
-    const refined = await refineDialogueBoxes(grouped.slice(0, 16), async (box) => {
+    res.boxes = await refinePageDialogues(grouped, async (box) => {
       const crop = document.createElement('canvas');
       const margin = 3;
       const x = Math.max(0, Math.floor(box.x - margin));
@@ -186,10 +190,9 @@ async function ocrFromDataUrl(
       const cropCtx = crop.getContext('2d');
       if (!cropCtx) throw new Error('crop canvas unavailable');
       cropCtx.drawImage(img, x, y, crop.width, crop.height, 0, 0, crop.width, crop.height);
-      return ocrFromDataUrl(crop.toDataURL('image/png'), langs, vendor,
+      return ocrFromDataUrl(crop.toDataURL('image/png'), cropLangs, vendor,
         { ...settings, ocrQuality: settings.ocrQuality === 'fast' ? 'fast' : 'balanced' }, true);
-    }, settings.ocrMinConfidence ?? 40);
-    res.boxes = [...refined, ...grouped.slice(16)];
+    }, settings.ocrMinConfidence ?? 40, lightBackdrop);
     res.text = res.boxes.map(box => box.text ?? '').filter(Boolean).join('\n');
   }
   return res;

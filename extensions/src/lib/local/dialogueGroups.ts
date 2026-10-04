@@ -81,6 +81,7 @@ export async function refineDialogueBoxes(
   boxes: readonly Box[],
   recognizeCrop: (box: Box) => Promise<{ text: string; confidence: number }>,
   minConfidence: number,
+  acceptFallback: (box: Box) => boolean = () => true,
 ): Promise<Box[]> {
   const out: Box[] = [];
   for (const box of boxes) {
@@ -88,6 +89,7 @@ export async function refineDialogueBoxes(
     try {
       const result = await recognizeCrop(box);
       if (result.text.trim() && result.confidence >= minConfidence) text = joinOcrLines(result.text);
+      else if (!acceptFallback(box)) continue;
     } catch { /* crop OCR is best effort; don't discard discovered dialogue */ }
     out.push({ ...box, text });
   }

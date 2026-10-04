@@ -138,6 +138,8 @@ export interface PageImage {
 }
 
 export interface Box {
+  /** Local OCR found a light backdrop; cover the source rectangle before drawing the bubble. */
+  maskSource?: boolean;
   x: number;
   y: number;
   width: number;
