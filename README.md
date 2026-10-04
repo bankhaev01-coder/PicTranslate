@@ -1,6 +1,9 @@
 # Перевод текста на изображениях — автономное браузерное расширение
 
 Расширение Chrome/Chromium (Manifest V3) переводит **все изображения на странице сразу**. Три движка на выбор: безсерверный AI (Gemini/OpenAI Vision), полностью локальный (Tesseract.js + ONNX Opus-MT) или свой FastAPI-бэкенд. Инструмент выделения поддерживает три формы — прямоугольник, овал и лассо — и позволяет набрать несколько областей, чтобы перевести их одной пачкой (Enter).
+<img width="1431" height="859" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" /><img width="934" height="864" alt="image" src="https://github.com/user-attachments/assets/f39c99e4-4137-4eee-8585-65c06f377523" />
+
+
 
 ## Что работает локально
 
