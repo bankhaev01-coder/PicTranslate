@@ -22,12 +22,13 @@ interface GeminiApiResponse {
 }
 
 export const GEMINI_PROMPT = `You are an expert manga and comic OCR and translation assistant.
-Analyze this image carefully. It is a cropped region of a comic page or manga panel.
+Analyze this image carefully. It may be a full comic page, a manga panel, or a selected crop.
 Extract all dialogue and narrative text verbatim, in reading order (top to bottom, right to left for vertical Japanese manga).
 Keep sound effects (SFX) on their own lines prefixed with "SFX:".
 Detect the approximate bounding box for each distinct speech bubble or text block in pixel coordinates relative to the original image dimensions [x, y, width, height].
 Translate each text segment faithfully and naturally into {target_lang}, preserving tone (shouting stays forceful, whispers stay soft).
-Do NOT merge separate bubbles into one line: one bubble = one entry in "boxes".
+Join the printed lines within each bubble into a complete sentence before translating. Never translate or box each printed line separately.
+Do NOT merge separate bubbles into one line: one bubble = one entry in "boxes". Ignore artwork mistaken for isolated characters.
 
 Return STRICTLY a valid JSON object matching this schema without any markdown, backticks, or extra text:
 {

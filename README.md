@@ -74,6 +74,10 @@ Backend FastAPI и Docker остаются **необязательными**: �
 - [`docs/README.dev.md`](docs/README.dev.md) — разработка, команды и troubleshooting.
 - [`docs/decisions/01-arch.md`](docs/decisions/01-arch.md) — архитектура, поток данных, автономный режим и roadmap.
 
+## Перевод страниц и видимой области
+
+[Изменения, установка в Windows и проверка на манге](docs/testing/page-bubbles.md). Доступна лёгкая OCR-сборка без локального Opus-MT (`npm run vendor:ocr`) для явного использования внешнего текстового переводчика. Groq настраивается по желанию через Custom AI.
+
 ## Лицензия
 
 MIT. См. [LICENSE](LICENSE).

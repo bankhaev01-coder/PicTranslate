@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import type { Settings } from '@/lib/types';
+import { groqVisionPreset } from '@/lib/ai/presets';
 
 interface Props {
   settings: Settings;
@@ -59,6 +60,13 @@ export default function AiSection({ settings, patch }: Props) {
             <option value="openrouter">{t('options.aiOpenrouter')}</option>
             <option value="custom">{t('options.aiCustom')}</option>
           </select>
+        </div>
+
+        <div className="field">
+          <button type="button" onClick={() => { patch(groqVisionPreset(settings)); setPermStatus(null); }}>
+            {t('options.groqPreset')}
+          </button>
+          <div className="hint">{t('options.groqPresetHint')}</div>
         </div>
 
         {selectedProvider === 'gemini' && (
