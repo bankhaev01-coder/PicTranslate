@@ -1,9 +1,29 @@
 # Перевод текста на изображениях — автономное браузерное расширение
 
-Расширение Chrome/Chromium (Manifest V3) переводит **все изображения на странице сразу**. Три движка на выбор: безсерверный AI (Gemini/OpenAI Vision), полностью локальный (Tesseract.js + ONNX Opus-MT) или свой FastAPI-бэкенд. Инструмент выделения поддерживает три формы — прямоугольник, овал и лассо — и позволяет набрать несколько областей, чтобы перевести их одной пачкой (Enter).
-<img width="934" height="864" alt="image" src="https://github.com/user-attachments/assets/04cfa359-56c4-4c0e-bb39-82592412927b" />
-<img width="1431" height="859" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" />
+Расширение Chrome/Chromium (Manifest V3) переводит **все изображения на странице сразу**. Доступны три режима: AI Vision без собственного сервера, полностью локальный OCR и перевод на устройстве, а также подключение собственного FastAPI-бэкенда.
 
+Инструмент выделения поддерживает прямоугольник, овал и лассо. Можно выбрать несколько областей и отправить их на перевод одной пачкой — клавишей Enter.
+
+## Примеры работы
+
+### Сравнение до и после перевода
+
+<table>
+  <tr>
+    <td><img width="360" alt="До перевода" src="https://github.com/user-attachments/assets/04cfa359-56c4-4c0e-bb39-82592412927b" /></td>
+    <td><img width="430" alt="После перевода" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" /></td>
+  </tr>
+  <tr>
+    <td><img width="360" alt="До перевода через AI Vision" src="https://github.com/user-attachments/assets/f0cfe1b1-d6d9-4338-9931-06feb44f609d" /></td>
+    <td><img width="430" alt="После перевода через AI Vision" src="https://github.com/user-attachments/assets/cd79c190-47fb-4fff-bc3c-aa2c59c198dd" /></td>
+  </tr>
+</table>
+
+### Перевод 22 страниц
+
+<img width="280" alt="Перевод 22 страниц" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" />
+
+[Смотреть демонстрационное видео](assets/demo.mkv)
 
 
 ## Что работает локально
