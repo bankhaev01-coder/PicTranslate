@@ -57,6 +57,13 @@ describe('LocalSection OCR-only pack readiness', () => {
     expect(await render({ externalMt: 'google' })).toBeNull();
     expect(container.textContent).not.toContain('options.offlinePackMissing');
   });
+  it('renders Japanese OCR layout choices and patches the selected mode', async () => {
+    await render();
+    const select = container.querySelector('#japaneseOcrLayout') as HTMLSelectElement;
+    expect(Array.from(select.options).map(option => option.value)).toEqual(['auto', 'horizontal', 'vertical']);
+    await act(async () => { select.value = 'vertical'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(mocks.patch).toHaveBeenCalledWith({ japaneseOcrLayout: 'vertical' });
+  });
 });
 
 describe('OCR model controls', () => {

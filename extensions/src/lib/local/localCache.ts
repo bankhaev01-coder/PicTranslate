@@ -32,6 +32,7 @@ export interface LocalCacheKeyInput {
   targetLang: string;
   ocrLangs: string[];
   ocrQuality: string;
+  japaneseOcrLayout: string;
   ocrMinConfidence: number;
   useNativeHost: boolean;
   cloudOcr: boolean;
@@ -55,7 +56,7 @@ export function buildLocalCacheKey(input: LocalCacheKeyInput): { scope: string; 
     input.regionOnly && input.cloudOcr ? (input.cloudTranslate ? 'cloudTr' : 'cloud') : '';
   const providerTag =
     input.externalMt === 'off' ? 'off' : `${input.externalMt}:${input.externalMtPriority}`;
-  const ocrTag = `${input.ocrQuality}:${input.ocrMinConfidence}:${
+  const ocrTag = `${input.ocrQuality}:${input.ocrMinConfidence}:${input.japaneseOcrLayout}:${
     input.useNativeHost ? 'native' : 'tesseract'
   }`;
   const cacheId = [

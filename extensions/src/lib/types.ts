@@ -19,6 +19,7 @@ export type ExternalMtPriority = 'prefer' | 'fallback';
 
 /** Насколько усердно локальный OCR улучшает картинку перед распознаванием. */
 export type OcrQuality = 'fast' | 'balanced' | 'best';
+export type JapaneseOcrLayout = 'auto' | 'horizontal' | 'vertical';
 
 export interface Settings {
   /**
@@ -77,6 +78,8 @@ export interface Settings {
    * 'balanced' — два (по умолчанию), 'best' — четыре с ранним выходом.
    */
   ocrQuality: OcrQuality;
+  /** Layout used when grouping Japanese OCR boxes. Auto preserves the existing heuristic. */
+  japaneseOcrLayout: JapaneseOcrLayout;
   /** Предпочтительная пара перевода, если исходный язык — 'auto'. */
   mtPair: string;
   /** Базовый URL бэкенда, например http://127.0.0.1:8000 (только engine: 'backend') */
@@ -119,6 +122,7 @@ export type LocalEngineSettings = Pick<
   | 'sourceLang'
   | 'ocrLangs'
   | 'ocrQuality'
+  | 'japaneseOcrLayout'
   | 'mtPair'
   | 'useNativeHost'
   | 'externalMt'

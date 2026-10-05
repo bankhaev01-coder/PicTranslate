@@ -12,6 +12,11 @@ export function refinementLanguages(langs: readonly string[], text: string, sour
   if (letters.length < 20) return [...langs];
   const latin = letters.filter(c => /\p{Script=Latin}/u.test(c)).length;
   const cyrillic = letters.filter(c => /\p{Script=Cyrillic}/u.test(c)).length;
+  const japanese = letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length;
+  if (japanese / letters.length >= 0.7) {
+    const selected = langs.filter(lang => lang === 'jpn' || lang === 'jpn_vert');
+    if (selected.length) return selected;
+  }
   if (latin / letters.length >= 0.9 && langs.includes('eng')) return ['eng'];
   if (cyrillic / letters.length >= 0.9 && langs.includes('rus')) return ['rus'];
   return [...langs];

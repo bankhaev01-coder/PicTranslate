@@ -178,7 +178,7 @@ async function ocrFromDataUrl(
       barrier = rasterSeparator(rgba, original.width, original.height);
       lightBackdrop = lightTextBackdrop(rgba, original.width, original.height);
     }
-    const grouped = groupDialogueBoxes(res.boxes, barrier);
+    const grouped = groupDialogueBoxes(res.boxes, barrier, settings.japaneseOcrLayout);
     const cropLangs = refinementLanguages(langs, res.text, settings.sourceLang);
     // Limit refinement work on long pages; every remaining group is preserved.
     res.boxes = await refinePageDialogues(grouped, async (box) => {
@@ -221,6 +221,7 @@ async function localPipeline(
     targetLang: settings.targetLang,
     ocrLangs: settings.ocrLangs,
     ocrQuality: settings.ocrQuality,
+    japaneseOcrLayout: settings.japaneseOcrLayout,
     ocrMinConfidence: settings.ocrMinConfidence,
     useNativeHost: settings.useNativeHost,
     cloudOcr: settings.cloudOcr,
@@ -320,7 +321,7 @@ async function localPipeline(
     }
   }
   if (!regionOnly && settings.useNativeHost && detectedBoxes.length) {
-    detectedBoxes = groupDialogueBoxes(detectedBoxes);
+    detectedBoxes = groupDialogueBoxes(detectedBoxes, undefined, settings.japaneseOcrLayout);
     sourceText = detectedBoxes.map(box => box.text ?? '').join('\n');
   }
   if (!sourceText) {

@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: Settings = {
   useNativeHost: false,
   ocrLangs: ['eng', 'rus'],
   ocrQuality: 'balanced',
+  japaneseOcrLayout: 'auto',
   mtPair: 'en-ru',
   ocrMinConfidence: 40,
   translateConcurrency: 1,

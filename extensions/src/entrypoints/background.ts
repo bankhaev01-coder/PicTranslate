@@ -146,6 +146,7 @@ async function translateByEngine(
       sourceLang: settings.sourceLang,
       ocrLangs: settings.ocrLangs,
       ocrQuality: settings.ocrQuality,
+      japaneseOcrLayout: settings.japaneseOcrLayout,
       mtPair: settings.mtPair,
       useNativeHost: settings.useNativeHost,
       externalMt: settings.externalMt,

@@ -133,6 +133,20 @@ export default function LocalSection({ settings, patch }: Props) {
       </div>
 
       <div className="field">
+        <label htmlFor="japaneseOcrLayout">{t('options.japaneseOcrLayout')}</label>
+        <select
+          id="japaneseOcrLayout"
+          value={settings.japaneseOcrLayout ?? 'auto'}
+          onChange={(e) => patch({ japaneseOcrLayout: e.target.value as Settings['japaneseOcrLayout'] })}
+        >
+          <option value="auto">{t('options.japaneseOcrLayoutAuto')}</option>
+          <option value="horizontal">{t('options.japaneseOcrLayoutHorizontal')}</option>
+          <option value="vertical">{t('options.japaneseOcrLayoutVertical')}</option>
+        </select>
+        <div className="hint">{t('options.japaneseOcrLayoutHint')}</div>
+      </div>
+
+      <div className="field">
         <label className="checkbox">
           <input
             type="checkbox"

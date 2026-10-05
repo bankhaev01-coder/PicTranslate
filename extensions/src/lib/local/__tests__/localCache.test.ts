@@ -8,6 +8,7 @@ const base: LocalCacheKeyInput = {
   targetLang: 'ru',
   ocrLangs: ['eng'],
   ocrQuality: 'balanced',
+  japaneseOcrLayout: 'auto',
   ocrMinConfidence: 40,
   useNativeHost: false,
   cloudOcr: false,
@@ -45,6 +46,7 @@ describe('buildLocalCacheKey', () => {
     expect(key({ ocrQuality: 'fast' }).cacheId).not.toBe(key({ ocrQuality: 'best' }).cacheId);
     expect(key({ ocrMinConfidence: 20 }).cacheId).not.toBe(key({ ocrMinConfidence: 60 }).cacheId);
     expect(key({ useNativeHost: true }).cacheId).not.toBe(key().cacheId);
+    expect(key({ japaneseOcrLayout: 'horizontal' }).cacheId).not.toBe(key({ japaneseOcrLayout: 'vertical' }).cacheId);
   });
 
   it('marks cloud OCR and cloud translation distinctly', () => {
