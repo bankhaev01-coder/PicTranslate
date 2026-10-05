@@ -11,6 +11,8 @@ AI vision.
 <img width="450" height="450" alt="image" src="https://github.com/user-attachments/assets/f0cfe1b1-d6d9-4338-9931-06feb44f609d" />
 <img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/cd79c190-47fb-4fff-bc3c-aa2c59c198dd" />
 
+Пример перевода 22 страниц сразу.  
+<img width="350" height="450" alt="image" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" />
 
 
 
