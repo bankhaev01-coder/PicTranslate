@@ -1,13 +1,17 @@
 # Перевод текста на изображениях — автономное браузерное расширение
 
-Расширение Chrome/Chromium (Manifest V3) переводит **все изображения на странице сразу**. Три движка на выбор: безсерверный AI (Gemini/OpenAI Vision), полностью локальный (Tesseract.js + ONNX Opus-MT) или свой FastAPI-бэкенд. Инструмент выделения поддерживает три формы — прямоугольник, овал и лассо — и позволяет набрать несколько областей, чтобы перевести их одной пачкой (Enter).
+Расширение Chrome/Chromium (Manifest V3) переводит **все изображения на странице сразу**. Три движка на выбор: безсерверный AI (Gemini/OpenAI Vision), полностью локальный (Tesseract.js + ONNX Opus-MT) или свой FastAPI-бэкенд. Инструмент выделения поддерживает три формы — прямоугольник, овал и лассо — и позволяет набрать несколько областей, чтобы перевести их одной пачкой (Enter). 
 Автономный режим.
 
 <img width="450" height="450" alt="image" src="https://github.com/user-attachments/assets/04cfa359-56c4-4c0e-bb39-82592412927b" />
 <img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" />
 
 AI vision.
-![Uploading image.png…]()
+
+
+
+<img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/cd79c190-47fb-4fff-bc3c-aa2c59c198dd" />
+
 
 
 
