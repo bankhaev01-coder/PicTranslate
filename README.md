@@ -6,10 +6,9 @@
 <img width="450" height="450" alt="image" src="https://github.com/user-attachments/assets/04cfa359-56c4-4c0e-bb39-82592412927b" />
 <img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" />
 
-AI vision.
+AI vision.  
 
-
-
+<img width="450" height="450" alt="image" src="https://github.com/user-attachments/assets/f0cfe1b1-d6d9-4338-9931-06feb44f609d" />
 <img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/cd79c190-47fb-4fff-bc3c-aa2c59c198dd" />
 
 
