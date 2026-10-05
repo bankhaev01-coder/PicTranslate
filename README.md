@@ -4,7 +4,7 @@
 Автономный режим.
 
 <img width="450" height="450" alt="image" src="https://github.com/user-attachments/assets/04cfa359-56c4-4c0e-bb39-82592412927b" />
-<img width="450" height="550" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" />
+<img width="550" height="450" alt="image" src="https://github.com/user-attachments/assets/7d752d93-8373-4dd6-ac57-46c4f045148e" />
 
 AI vision.
 ![Uploading image.png…]()
