@@ -7,6 +7,8 @@ export interface NativeHostRequest {
   action: 'ping' | 'ocr';
   image_base64?: string;
   langs?: string[];
+  /** Порог уверенности OCR (0–100): хост отбрасывает слова с меньшей уверенностью. */
+  min_confidence?: number;
 }
 
 export interface NativeHostResponse {
@@ -14,6 +16,7 @@ export interface NativeHostResponse {
   version?: string;
   tesseract_available?: boolean;
   source_text?: string;
+  /** Боксы в координатах исходного изображения. */
   boxes?: Array<{
     x: number;
     y: number;
