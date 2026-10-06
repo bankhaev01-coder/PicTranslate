@@ -11,6 +11,9 @@
 -------
   ping  -> сообщает версию хоста и доступен ли бинарник Tesseract.
   ocr   -> запускает OCR на base64 PNG и возвращает простой текст + пословные боксы.
+           Боксы всегда в координатах ИСХОДНОГО изображения (даже если хост
+           уменьшал картинку перед OCR). Необязательное поле запроса
+           ``min_confidence`` (0–100) отбрасывает слова с меньшей уверенностью.
 
 Хост запускается браузером по запросу
 (``chrome.runtime.sendNativeMessage``), поэтому слушающего сокета и
@@ -34,6 +37,9 @@ import tempfile
 
 VERSION = "1.0.0"
 HOST_NAME = "com.manga.translate.host"
+
+# Порог уверенности по умолчанию — тот же, что ocrMinConfidence в расширении.
+DEFAULT_MIN_CONFIDENCE = 40.0
 
 # -- Поиск Tesseract ---------------------------------------------------------
 
@@ -79,30 +85,44 @@ def tesseract_langs(cmd: str) -> list[str]:
 # -- OCR ---------------------------------------------------------------------
 
 
-def downscale_png(png_bytes: bytes, max_dim: int = 1600) -> bytes:
-    """При необходимости уменьшить PNG, чтобы OCR был быстрым. При сбое вернёт вход."""
+def downscale_png(png_bytes: bytes, max_dim: int = 1600) -> tuple[bytes, float]:
+    """При необходимости уменьшить PNG, чтобы OCR был быстрым.
+
+    Возвращает (байты, scale), где scale = новый размер / исходный (1.0, если
+    картинка не менялась). По scale боксы пересчитываются обратно в исходные
+    координаты. При любом сбое возвращает вход и 1.0.
+    """
     try:
         import io
 
         from PIL import Image  # optional dependency
     except Exception:
-        return png_bytes
+        return png_bytes, 1.0
     try:
         with Image.open(io.BytesIO(png_bytes)) as im:
             im = im.convert("RGB")
             if max(im.width, im.height) <= max_dim:
-                return png_bytes
+                return png_bytes, 1.0
             ratio = max_dim / max(im.width, im.height)
             im = im.resize((int(im.width * ratio), int(im.height * ratio)), Image.LANCZOS)
             buf = io.BytesIO()
             im.save(buf, format="PNG")
-            return buf.getvalue()
+            return buf.getvalue(), ratio
     except Exception:
-        return png_bytes
+        return png_bytes, 1.0
 
 
-def _parse_tsv(tsv_text: str) -> tuple[str, list[dict]]:
-    """Разобрать TSV-вывод tesseract в (source_text, boxes)."""
+def _parse_tsv(
+    tsv_text: str,
+    min_confidence: float = 0.0,
+    scale: float = 1.0,
+) -> tuple[str, list[dict]]:
+    """Разобрать TSV-вывод tesseract в (source_text, boxes).
+
+    * Слова с ``conf`` ниже ``min_confidence`` отбрасываются (шум с рисунка).
+    * Координаты делятся на ``scale``, чтобы вернуть их в масштаб исходного
+      изображения, если перед OCR картинку уменьшали.
+    """
     rows = [line.rstrip("\n").split("\t") for line in tsv_text.splitlines() if line.strip()]
     if not rows:
         return "", []
@@ -111,6 +131,8 @@ def _parse_tsv(tsv_text: str) -> tuple[str, list[dict]]:
     idx = {name: i for i, name in enumerate(header)}
     boxes: list[dict] = []
     words: list[str] = []
+    if not scale or scale <= 0:
+        scale = 1.0
 
     def num(row: list[str], key: str) -> int:
         try:
@@ -118,18 +140,32 @@ def _parse_tsv(tsv_text: str) -> tuple[str, list[dict]]:
         except Exception:
             return 0
 
+    def conf(row: list[str]) -> float | None:
+        if "conf" not in idx:
+            return None
+        try:
+            return float(row[idx["conf"]])
+        except Exception:
+            return None
+
+    def unscale(value: int) -> int:
+        return int(round(value / scale))
+
     for row in rows[1:]:
         if len(row) < len(header):
             continue
         text = row[idx["text"]] if "text" in idx and idx["text"] < len(row) else ""
         if not text.strip():
             continue
+        c = conf(row)
+        if c is not None and c < min_confidence:
+            continue
         boxes.append(
             {
-                "x": num(row, "left"),
-                "y": num(row, "top"),
-                "width": num(row, "width"),
-                "height": num(row, "height"),
+                "x": unscale(num(row, "left")),
+                "y": unscale(num(row, "top")),
+                "width": unscale(num(row, "width")),
+                "height": unscale(num(row, "height")),
                 "text": text,
             }
         )
@@ -138,8 +174,18 @@ def _parse_tsv(tsv_text: str) -> tuple[str, list[dict]]:
     return " ".join(words).strip(), boxes
 
 
+def _min_confidence(value: object) -> float:
+    """Порог уверенности из запроса: число 0–100, иначе значение по умолчанию."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_MIN_CONFIDENCE
+    return max(0.0, min(100.0, float(value)))
 
-def run_ocr(image_base64: str, langs: list[str]) -> dict:
+
+def run_ocr(
+    image_base64: str,
+    langs: list[str],
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+) -> dict:
     """Запустить Tesseract через CLI и вернуть {source_text, boxes}."""
     cmd = find_tesseract()
     if not cmd:
@@ -164,8 +210,9 @@ def run_ocr(image_base64: str, langs: list[str]) -> dict:
     in_path = os.path.join(tmp_dir, "input.png")
     out_base = os.path.join(tmp_dir, "out")
     try:
+        png_bytes, scale = downscale_png(raw)
         with open(in_path, "wb") as fh:
-            fh.write(downscale_png(raw))
+            fh.write(png_bytes)
 
         lang_arg = "+".join(langs)
         proc = subprocess.run(
@@ -186,7 +233,7 @@ def run_ocr(image_base64: str, langs: list[str]) -> dict:
         boxes: list[dict] = []
         if os.path.isfile(tsv_path):
             with open(tsv_path, "r", encoding="utf-8") as fh:
-                source_text, boxes = _parse_tsv(fh.read())
+                source_text, boxes = _parse_tsv(fh.read(), min_confidence, scale)
         else:
             txt_path = out_base + ".txt"
             if os.path.isfile(txt_path):
@@ -247,7 +294,7 @@ def handle(request: dict) -> dict:
         langs = request.get("langs") or []
         if not image:
             return {"ok": False, "error": "image_base64 is required"}
-        return run_ocr(image, langs)
+        return run_ocr(image, langs, _min_confidence(request.get("min_confidence")))
 
     return {"ok": False, "error": f"unknown action: {action}"}
 
