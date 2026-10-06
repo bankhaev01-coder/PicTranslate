@@ -1,7 +1,6 @@
 """Эндпоинт перевода: принимает изображение, маршрутизирует в адаптер, кеширует."""
 from __future__ import annotations
 
-import io
 import logging
 
 import httpx
@@ -13,11 +12,19 @@ from app.config import get_settings
 from app.models.registry import get_adapter
 from app.queue import TaskQueue
 from app.schemas.translate import ErrorResponse, TranslateRequest, TranslateResult
+from app.translator import TranslationNotConfigured
 
 router = APIRouter()
 log = logging.getLogger("translate-ext")
 
 _queue: TaskQueue | None = None
+
+# Кеш создаётся один раз (раньше — на каждый запрос: новое подключение к Redis и
+# mkdir на каждый POST). Фабрику запоминаем вместе с объектом, чтобы
+# подмена make_cache в тестах сразу давала новый кеш.
+_cache_state: tuple[object, object] | None = None  # (factory, cache)
+
+_READ_CHUNK = 64 * 1024
 
 
 def _get_queue() -> TaskQueue:
@@ -25,6 +32,32 @@ def _get_queue() -> TaskQueue:
     if _queue is None:
         _queue = TaskQueue(get_settings().max_concurrent_tasks)
     return _queue
+
+
+def _get_cache(settings):
+    global _cache_state
+    if _cache_state is None or _cache_state[0] is not make_cache:
+        _cache_state = (make_cache, make_cache(settings))
+    return _cache_state[1]
+
+
+async def _read_limited(file: UploadFile, limit: int) -> bytes:
+    """Прочитать загрузку, но не больше limit байт (иначе 413).
+
+    Раньше файл читался целиком в память и только потом сравнивался с лимитом.
+    """
+    size = getattr(file, "size", None)
+    if isinstance(size, int) and size > limit:
+        raise HTTPException(413, "image too large")
+    buf = bytearray()
+    while True:
+        chunk = await file.read(_READ_CHUNK)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise HTTPException(413, "image too large")
+    return bytes(buf)
 
 
 @router.post(
@@ -45,9 +78,7 @@ async def translate(
     `region_only=true` помечает запрос на исправление (его шлёт инструмент выделения).
     """
     settings = get_settings()
-    raw = await file.read()
-    if len(raw) > settings.max_image_bytes:
-        raise HTTPException(413, "image too large")
+    raw = await _read_limited(file, settings.max_image_bytes)
 
     req = TranslateRequest(
         target_lang=target_lang,
@@ -57,7 +88,7 @@ async def translate(
     )
 
     # ── Поиск в кеше (ключ включает режим/область/языки, чтобы исправления различались) ──
-    cache = make_cache(settings)
+    cache = _get_cache(settings)
     mode = req.model or settings.default_mode
     cache_key = (
         f"{'reg' if req.region_only else 'full'}:{mode}:{req.target_lang}:"
@@ -78,8 +109,10 @@ async def translate(
     # ── Запуск (ограниченная параллельность) ──
     try:
         result = await _get_queue().submit(adapter.process(raw, req))
+    except TranslationNotConfigured as e:
+        raise HTTPException(503, f"translation provider not configured: {e}")
     except httpx.HTTPStatusError as e:
-        status = e.response.status_code if e.response else 502
+        status = e.response.status_code if e.response is not None else 502
         raise HTTPException(status, f"upstream error from {adapter.name}: {e}")
     except Exception as e:  # noqa: BLE001 — отдать клиенту как 502
         log.exception("translation failed")
@@ -91,4 +124,3 @@ async def translate(
         cache.set(cache_key, payload, settings.cache_ttl_seconds)
 
     return JSONResponse(payload)
-

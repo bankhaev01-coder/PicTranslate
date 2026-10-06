@@ -95,5 +95,42 @@ class DownscaleTest(unittest.TestCase):
         self.assertEqual(result["boxes"], [{"x": 200, "y": 100, "width": 80, "height": 20, "text": "WORD"}])
 
 
+class ProtocolTests(unittest.TestCase):
+    @staticmethod
+    def _stdin(payload: bytes, declared: int | None = None):
+        import struct
+        length = len(payload) if declared is None else declared
+        return mock.patch.object(sys, "stdin", mock.Mock(buffer=io.BytesIO(struct.pack("<I", length) + payload)))
+
+    def test_valid_message_is_parsed(self) -> None:
+        with self._stdin(b'{"action": "ping"}'):
+            self.assertEqual(host.read_message(), {"action": "ping"})
+
+    def test_invalid_json_is_protocol_error_not_ping(self) -> None:
+        with self._stdin(b"{not json"):
+            with self.assertRaises(host.ProtocolError):
+                host.read_message()
+
+    def test_non_object_is_rejected(self) -> None:
+        with self._stdin(b"[1, 2]"):
+            with self.assertRaises(host.ProtocolError):
+                host.read_message()
+
+    def test_truncated_payload_means_disconnect(self) -> None:
+        with self._stdin(b'{"action"', declared=100):
+            self.assertIsNone(host.read_message())
+
+    def test_oversized_message_is_rejected(self) -> None:
+        with self._stdin(b"", declared=host.MAX_MESSAGE_BYTES + 1):
+            with self.assertRaises(host.ProtocolError):
+                host.read_message()
+
+    def test_missing_action_is_error(self) -> None:
+        self.assertEqual(host.handle({}), {"ok": False, "error": "action is required"})
+
+    def test_ping_still_works(self) -> None:
+        self.assertTrue(host.handle({"action": "ping"}).get("ok"))
+
+
 if __name__ == "__main__":
     unittest.main()

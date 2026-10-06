@@ -253,19 +253,36 @@ def run_ocr(
 # -- Протокольная обвязка ----------------------------------------------------
 
 
+# Сообщения от браузера к хосту ограничены Chrome 4 ГБ; столько нам не нужно.
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
+class ProtocolError(Exception):
+    """Сообщение нельзя разобрать: битый JSON, не объект или слишком большой размер."""
+
+
 def read_message() -> dict | None:
-    """Прочитать ровно одно JSON-сообщение с префиксом длины из stdin."""
+    """Прочитать ровно одно JSON-сообщение с префиксом длины из stdin.
+
+    None — stdin закрыт (браузер отключился). Битое сообщение даёт
+    ProtocolError, а не пустой dict: раньше {} обрабатывался как ping.
+    """
     raw_len = sys.stdin.buffer.read(4)
     if len(raw_len) < 4:
         return None
     (length,) = struct.unpack("<I", raw_len)
-    if length == 0:
-        return {}
+    if length > MAX_MESSAGE_BYTES:
+        raise ProtocolError(f"message too large: {length} bytes")
     payload = sys.stdin.buffer.read(length)
+    if len(payload) < length:
+        return None
     try:
-        return json.loads(payload.decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
+        message = json.loads(payload.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ProtocolError(f"invalid JSON message: {exc}") from exc
+    if not isinstance(message, dict):
+        raise ProtocolError("message must be a JSON object")
+    return message
 
 
 def write_message(message: dict) -> None:
@@ -277,7 +294,9 @@ def write_message(message: dict) -> None:
 
 
 def handle(request: dict) -> dict:
-    action = request.get("action", "ping")
+    action = request.get("action")
+    if not action:
+        return {"ok": False, "error": "action is required"}
 
     if action == "ping":
         cmd = find_tesseract()
@@ -302,7 +321,15 @@ def handle(request: dict) -> dict:
 def main() -> None:
     # Chrome использует бинарные кадры, поэтому stdout должен оставаться чистым.
     while True:
-        request = read_message()
+        try:
+            request = read_message()
+        except ProtocolError as exc:
+            # Слишком большое сообщение могло не дочитаться — поток рассинхронизирован,
+            # отвечаем ошибкой и выходим; битый JSON — отвечаем ошибкой и продолжаем.
+            write_message({"ok": False, "error": str(exc)})
+            if str(exc).startswith("message too large"):
+                break
+            continue
         if request is None:
             break
         try:
