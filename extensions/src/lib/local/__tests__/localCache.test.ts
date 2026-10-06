@@ -49,6 +49,18 @@ describe('buildLocalCacheKey', () => {
     expect(key({ japaneseOcrLayout: 'horizontal' }).cacheId).not.toBe(key({ japaneseOcrLayout: 'vertical' }).cacheId);
   });
 
+  it('changes the key when the local MT pair changes', () => {
+    expect(key({ mtPair: 'en-ru' }).cacheId).not.toBe(key({ mtPair: 'ja-ru' }).cacheId);
+    expect(key({ mtPair: 'en-ru' }).cacheId).not.toBe(key().cacheId);
+  });
+
+  it('changes the key when installed models change', () => {
+    const a = key({ modelRevision: '["en-ru"]|jpn:1' }).cacheId;
+    const b = key({ modelRevision: '["en-ru"]|jpn:2' }).cacheId;
+    expect(a).not.toBe(b);
+    expect(a.endsWith(':abc123')).toBe(true);
+  });
+
   it('marks cloud OCR and cloud translation distinctly', () => {
     const cloud = key({ cloudOcr: true }).cacheId;
     const cloudTr = key({ cloudOcr: true, cloudTranslate: true }).cacheId;

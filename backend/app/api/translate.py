@@ -1,6 +1,7 @@
 """Эндпоинт перевода: принимает изображение, маршрутизирует в адаптер, кеширует."""
 from __future__ import annotations
 
+import hashlib
 import logging
 
 import httpx
@@ -26,6 +27,8 @@ _cache_state: tuple[object, object] | None = None  # (factory, cache)
 
 _READ_CHUNK = 64 * 1024
 
+_TRANSLATION_PROVIDERS = ("openai", "gemini", "custom")
+
 
 def _get_queue() -> TaskQueue:
     global _queue
@@ -39,6 +42,31 @@ def _get_cache(settings):
     if _cache_state is None or _cache_state[0] is not make_cache:
         _cache_state = (make_cache, make_cache(settings))
     return _cache_state[1]
+
+
+def _setting(settings, name: str) -> str:
+    return str(getattr(settings, name, "") or "")
+
+
+def _model_fingerprint(mode: str, settings) -> str:
+    """Конфигурация моделей, от которой зависит результат режима.
+
+    Входит в ключ кеша: после смены модели/провайдера в .env бэкенд не должен
+    весь TTL отдавать перевод, сделанный старой моделью.
+    """
+    if mode == "openai":
+        return f"openai|{_setting(settings, 'openai_base_url')}|{_setting(settings, 'openai_model')}"
+    if mode == "gemini":
+        return f"gemini|{_setting(settings, 'gemini_model')}"
+    if mode == "custom":
+        return f"custom|{_setting(settings, 'custom_api_url')}|{_setting(settings, 'custom_model_name')}"
+    if mode == "cloud":
+        return f"{_model_fingerprint('openai', settings)}#{_model_fingerprint('gemini', settings)}"
+    if mode in ("local", "tesseract"):
+        provider = _setting(settings, "local_translation_provider") or "none"
+        nested = _model_fingerprint(provider, settings) if provider in _TRANSLATION_PROVIDERS else ""
+        return f"tesseract|{_setting(settings, 'tesseract_lang')}|{provider}|{nested}"
+    return mode
 
 
 async def _read_limited(file: UploadFile, limit: int) -> bytes:
@@ -87,11 +115,12 @@ async def translate(
         region_only=region_only.lower() == "true",
     )
 
-    # ── Поиск в кеше (ключ включает режим/область/языки, чтобы исправления различались) ──
+    # ── Поиск в кеше (ключ включает режим/модель/область/языки) ──
     cache = _get_cache(settings)
     mode = req.model or settings.default_mode
+    model_tag = hashlib.sha1(_model_fingerprint(mode, settings).encode("utf-8")).hexdigest()[:12]
     cache_key = (
-        f"{'reg' if req.region_only else 'full'}:{mode}:{req.target_lang}:"
+        f"{'reg' if req.region_only else 'full'}:{mode}:{model_tag}:{req.target_lang}:"
         f"{req.source_lang}:{image_hash(raw)}"
     )
     if cache is not None:
@@ -105,20 +134,32 @@ async def translate(
         adapter = get_adapter(mode, settings)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    adapter_name = getattr(adapter, "name", "unknown")
 
     # ── Запуск (ограниченная параллельность) ──
     try:
         result = await _get_queue().submit(adapter.process(raw, req))
+        # Внутри try: невалидный ответ модели (ValidationError) — это ошибка
+        # провайдера (502), а не необработанный 500.
+        out = result.to_translate_result(adapter_name, result._latency)
     except TranslationNotConfigured as e:
         raise HTTPException(503, f"translation provider not configured: {e}")
     except httpx.HTTPStatusError as e:
-        status = e.response.status_code if e.response is not None else 502
-        raise HTTPException(status, f"upstream error from {adapter.name}: {e}")
+        upstream = e.response.status_code if e.response is not None else None
+        log.warning("upstream %s returned HTTP %s", adapter_name, upstream)
+        # 401/403 провайдера не пробрасываем как есть: клиент принял бы их за
+        # отказ авторизации самого бэкенда. 429 оставляем — его можно повторить.
+        status = 429 if upstream == 429 else 502
+        raise HTTPException(status, f"upstream {adapter_name} returned HTTP {upstream}")
+    except httpx.TimeoutException:
+        log.warning("upstream %s timed out", adapter_name)
+        raise HTTPException(504, f"upstream {adapter_name} timed out")
     except Exception as e:  # noqa: BLE001 — отдать клиенту как 502
+        # Полный текст исключения (может содержать URL, тело ответа и т.п.)
+        # остаётся в логе сервера; клиенту — только тип ошибки.
         log.exception("translation failed")
-        raise HTTPException(502, f"translation failed: {e}")
+        raise HTTPException(502, f"translation failed: {type(e).__name__} (see server log)")
 
-    out = result.to_translate_result(getattr(adapter, "name", "unknown"), result._latency)
     payload = out.model_dump(exclude_none=True)
     if cache is not None:
         cache.set(cache_key, payload, settings.cache_ttl_seconds)

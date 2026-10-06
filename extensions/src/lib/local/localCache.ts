@@ -24,6 +24,16 @@ function requestFor(scope: string, key: string): Request {
   return new Request(`https://te.local/${scope}/${key}`);
 }
 
+/** Короткий детерминированный хеш (FNV-1a, 32 бит) для длинных частей ключа. */
+function shortHash(value: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
 /** Всё, что влияет на распознанный текст или перевод и обязано войти в ключ. */
 export interface LocalCacheKeyInput {
   imageHash: string;
@@ -39,15 +49,20 @@ export interface LocalCacheKeyInput {
   cloudTranslate: boolean;
   externalMt: string;
   externalMtPriority: string;
+  /** Предпочтительная пара локальной NMT-модели (settings.mtPair). */
+  mtPair?: string;
+  /** Отпечаток установленных моделей (NMT-пары + OCR-модели): их обновление инвалидирует кеш. */
+  modelRevision?: string;
 }
 
 /**
  * Ключ кеша результата. В ключ обязан входить каждый параметр, меняющий текст
- * или перевод: смена провайдера внешнего MT, приоритета, качества OCR или
- * языка не должна отдавать чужой результат из кеша. Облачный OCR относится
- * только к кропу области (regionOnly+cloudOcr): получает свой тег `cloud`
- * (`cloudTr`, если сервер сразу перевёл), чтобы серверный и локальный
- * результаты не смешивались. `scope` (reg/full) разделяет кроп и полный скан.
+ * или перевод: смена провайдера внешнего MT, приоритета, качества OCR, пары
+ * модели, набора установленных моделей или языка не должна отдавать чужой
+ * результат из кеша. Облачный OCR относится только к кропу области
+ * (regionOnly+cloudOcr): получает свой тег `cloud` (`cloudTr`, если сервер
+ * сразу перевёл), чтобы серверный и локальный результаты не смешивались.
+ * `scope` (reg/full) разделяет кроп и полный скан.
  *
  * Чистая функция — юнит-тестируется.
  */
@@ -59,12 +74,16 @@ export function buildLocalCacheKey(input: LocalCacheKeyInput): { scope: string; 
   const ocrTag = `${input.ocrQuality}:${input.ocrMinConfidence}:${input.japaneseOcrLayout}:${
     input.useNativeHost ? 'native' : 'tesseract'
   }`;
+  const mtTag = input.mtPair ? `mt=${input.mtPair}` : '';
+  const revTag = input.modelRevision ? `rev=${shortHash(input.modelRevision)}` : '';
   const cacheId = [
     input.targetLang,
     input.sourceLang,
     input.ocrLangs.join('+'),
     ocrTag,
     providerTag,
+    mtTag,
+    revTag,
     cloudTag,
     input.imageHash,
   ]
