@@ -15,7 +15,7 @@ import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
-import { groupDialogueBoxes, rasterSeparator } from '@/lib/local/dialogueGroups';
+import { groupDialogueBoxes, rasterSeparator, type SeparatesLines } from '@/lib/local/dialogueGroups';
 import { lightTextBackdrop, refinementLanguages, refinePageDialogues } from '@/lib/local/pageOcr';
 import { translateDialogueBoxes, dialogueTranslationText } from '@/lib/local/boxTranslation';
 import { parseImageOcr } from '@/lib/local/parseImage';
@@ -84,6 +84,33 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error('image decode failed'));
     img.src = src;
   });
+}
+
+/**
+ * Растровый барьер (рамки панелей/пузырей) для группировки боксов native host —
+ * тот же запрет на слияние, что и на пути встроенного tesseract-воркера.
+ * Best effort: если декодировать картинку нельзя, группировка идёт без барьера.
+ */
+async function nativeGroupingBarrier(dataUrl: string): Promise<SeparatesLines | undefined> {
+  if (typeof createImageBitmap !== 'function') return undefined;
+  try {
+    const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(bitmap, 0, 0);
+      const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      return rasterSeparator(rgba, canvas.width, canvas.height);
+    } finally {
+      bitmap.close();
+    }
+  } catch (e) {
+    console.warn('[offscreen] native grouping barrier unavailable:', e);
+    return undefined;
+  }
 }
 
 /** Целевая меньшая сторона канвы перед OCR по качеству (fast/balanced/best):
@@ -212,8 +239,9 @@ async function localPipeline(
 
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   const hash = await sha256Hex(bytes);
-  // Ключ включает провайдера MT и настройки OCR: с��ена любого из них даёт
-  // другой ключ, и пользователь не получит чужой/устаревший результат.
+  // Ключ включает провайдера MT, настройки OCR, выбранную пару модели и
+  // ревизию установленных моделей: смена любого из них даёт другой ключ, и
+  // пользователь не получит чужой/устаревший результат.
   const { scope, cacheId } = buildLocalCacheKey({
     imageHash: hash,
     regionOnly,
@@ -228,6 +256,8 @@ async function localPipeline(
     cloudTranslate: settings.cloudTranslate,
     externalMt: settings.externalMt,
     externalMtPriority: settings.externalMtPriority,
+    mtPair: String(settings.mtPair ?? ''),
+    modelRevision: `${JSON.stringify(vendor?.pairs ?? [])}|${vendor?.ocrModelRevision ?? ''}`,
   });
 
   const fail = (error: string, source = ''): TranslateResult => ({
@@ -298,7 +328,14 @@ async function localPipeline(
         langs = resolveOcrLanguages(requestedLangs, vendor?.ocrLangs ?? [], settings.sourceLang);
       }
       if (settings.useNativeHost) {
-        const native = await sendNativeMessage({ action: 'ocr', image_base64: dataUrl, langs });
+        // Порог уверенности тот же, что и на пути встроенного tesseract-воркера:
+        // без него в перевод попадает «текст», найденный в рисунке.
+        const native = await sendNativeMessage({
+          action: 'ocr',
+          image_base64: dataUrl,
+          langs,
+          min_confidence: settings.ocrMinConfidence ?? 40,
+        });
         if (!native.ok) {
           return fail(`Native OCR: ${native.error ?? 'host did not respond'}`);
         }
@@ -321,7 +358,9 @@ async function localPipeline(
     }
   }
   if (!regionOnly && settings.useNativeHost && detectedBoxes.length) {
-    detectedBoxes = groupDialogueBoxes(detectedBoxes, undefined, settings.japaneseOcrLayout);
+    // Боксы хоста — в координатах исходного изображения, как и барьер.
+    const barrier = await nativeGroupingBarrier(dataUrl);
+    detectedBoxes = groupDialogueBoxes(detectedBoxes, barrier, settings.japaneseOcrLayout);
     sourceText = detectedBoxes.map(box => box.text ?? '').join('\n');
   }
   if (!sourceText) {
@@ -373,7 +412,7 @@ async function localPipeline(
 
   if (!pick.pair) {
     if (externalFirst && externalError) {
-      // Внешний уже пробовали и он упал, локальной пары тоже нет — показывае�� причину.
+      // Внешний уже пробовали и он упал, локальной пары тоже нет — показываем причину.
       return fail(externalError, sourceText);
     }
     if (!externalFirst && settings.externalMt !== 'off') {

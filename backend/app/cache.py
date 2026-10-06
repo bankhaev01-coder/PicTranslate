@@ -11,7 +11,10 @@ from pathlib import Path
 
 log = logging.getLogger("translate-ext")
 
-_CACHE = {}
+DEFAULT_TTL = 86400
+
+# Ключ конверта файлового кеша: {"__expires_at": <unix-ts>, "value": ...}.
+_EXPIRES = "__expires_at"
 
 # Символы, недопустимые в именах файлов Windows (':', '?', ...) + управляющие.
 _UNSAFE_FS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -31,21 +34,21 @@ def image_hash(image_bytes: bytes) -> str:
 
 
 class RedisCache:
-    def __init__(self, url: str):
+    def __init__(self, url: str, ttl: int = DEFAULT_TTL):
         import redis
         self._r = redis.from_url(url, decode_responses=True)
-        self._ttl = None
+        self._ttl = ttl
 
     def get(self, key: str):
         raw = self._r.get(key)
         return json.loads(raw) if raw else None
 
-    def set(self, key: str, value, ttl: int = 86400):
-        self._r.setex(key, ttl, json.dumps(value))
+    def set(self, key: str, value, ttl: int | None = None):
+        self._r.setex(key, ttl or self._ttl, json.dumps(value))
 
 
 class FileCache:
-    def __init__(self, directory: str, ttl: int = 86400):
+    def __init__(self, directory: str, ttl: int = DEFAULT_TTL):
         self._dir = Path(directory)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._ttl = ttl
@@ -58,27 +61,34 @@ class FileCache:
         p = self._path(key)
         if not p.exists():
             return None
-        if (p.stat().st_mtime + self._ttl) < time.time():
-            return None
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(p.read_text(encoding="utf-8"))
         except Exception as e:  # pragma: no cover
             log.warning("cache read error: %s", e)
             return None
+        if isinstance(data, dict) and _EXPIRES in data:
+            if float(data[_EXPIRES]) < time.time():
+                return None
+            return data.get("value")
+        # Старый формат без конверта: срок считаем от mtime и TTL кеша.
+        if (p.stat().st_mtime + self._ttl) < time.time():
+            return None
+        return data
 
-    def set(self, key: str, value, ttl: int = 86400):
+    def set(self, key: str, value, ttl: int | None = None):
         p = self._path(key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(value), encoding="utf-8")
+        expires_at = time.time() + (ttl or self._ttl)
+        p.write_text(json.dumps({_EXPIRES: expires_at, "value": value}), encoding="utf-8")
 
 
 def make_cache(settings) -> "object":
-    """Вернуть объект кеша с get(key)/set(key, value)."""
+    """Вернуть объект кеша с get(key)/set(key, value, ttl)."""
     url = settings.redis_url
     if url:
         try:
             import redis  # noqa: F401
-            return RedisCache(url)
+            return RedisCache(url, settings.cache_ttl_seconds)
         except Exception as e:  # pragma: no cover
             log.warning("Redis unavailable (%s); falling back to file cache", e)
     if settings.use_file_cache_if_no_redis:
