@@ -239,8 +239,9 @@ async function localPipeline(
 
   const bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   const hash = await sha256Hex(bytes);
-  // Ключ включает провайдера MT и настройки OCR: смена любого из них даёт
-  // другой ключ, и пользователь не получит чужой/устаревший результат.
+  // Ключ включает провайдера MT, настройки OCR, выбранную пару модели и
+  // ревизию установленных моделей: смена любого из них даёт другой ключ, и
+  // пользователь не получит чужой/устаревший результат.
   const { scope, cacheId } = buildLocalCacheKey({
     imageHash: hash,
     regionOnly,
@@ -255,6 +256,8 @@ async function localPipeline(
     cloudTranslate: settings.cloudTranslate,
     externalMt: settings.externalMt,
     externalMtPriority: settings.externalMtPriority,
+    mtPair: String(settings.mtPair ?? ''),
+    modelRevision: `${JSON.stringify(vendor?.pairs ?? [])}|${vendor?.ocrModelRevision ?? ''}`,
   });
 
   const fail = (error: string, source = ''): TranslateResult => ({
