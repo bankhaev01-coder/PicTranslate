@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { httpErrorDetail } from '../api';
+import { abortMessage, httpErrorDetail } from '../api';
 
 describe('httpErrorDetail', () => {
   it('keeps a plain FastAPI string detail', () => {
@@ -33,5 +33,21 @@ describe('httpErrorDetail', () => {
     const body: Record<string, unknown> = {};
     body.detail = body;
     expect(httpErrorDetail(body, 'HTTP 500')).toBe('HTTP 500');
+  });
+});
+
+describe('abortMessage', () => {
+  const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+
+  it('reports a timeout only when the timer fired', () => {
+    expect(abortMessage(abortError(), true)).toBe('Request timed out');
+  });
+
+  it('reports user cancellation separately from timeout', () => {
+    expect(abortMessage(abortError(), false)).toBe('Request cancelled');
+  });
+
+  it('stringifies other errors', () => {
+    expect(abortMessage(new TypeError('Failed to fetch'), false)).toBe('TypeError: Failed to fetch');
   });
 });

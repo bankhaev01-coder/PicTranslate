@@ -39,3 +39,34 @@ def test_file_cache_miss():
     with tempfile.TemporaryDirectory() as d:
         c = FileCache(d)
         assert c.get("nope") is None
+
+
+def test_file_cache_respects_per_item_ttl(monkeypatch):
+    """ttl из set() раньше игнорировался."""
+    import app.cache as cache_mod
+
+    now = [1_000_000.0]
+    monkeypatch.setattr(cache_mod.time, "time", lambda: now[0])
+    with tempfile.TemporaryDirectory() as d:
+        c = FileCache(d, ttl=3600)
+        c.set("short", {"k": 1}, ttl=10)
+        c.set("long", {"k": 2})
+        now[0] += 11
+        assert c.get("short") is None
+        assert c.get("long") == {"k": 2}
+        now[0] += 3600
+        assert c.get("long") is None
+
+
+def test_file_cache_reads_legacy_entries_without_envelope():
+    import json
+
+    with tempfile.TemporaryDirectory() as d:
+        c = FileCache(d, ttl=3600)
+        p = c._path("legacy")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"translation": "old"}), encoding="utf-8")
+        assert c.get("legacy") == {"translation": "old"}
+        old = p.stat().st_mtime - 7200
+        os.utime(p, (old, old))
+        assert c.get("legacy") is None
