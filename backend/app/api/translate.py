@@ -142,6 +142,10 @@ async def translate(
         # Внутри try: невалидный ответ модели (ValidationError) — это ошибка
         # провайдера (502), а не необработанный 500.
         out = result.to_translate_result(adapter_name, result._latency)
+    except HTTPException:
+        # Адаптер сам выбрал статус (например, 400 на пустое изображение) — не
+        # превращаем его в 502.
+        raise
     except TranslationNotConfigured as e:
         raise HTTPException(503, f"translation provider not configured: {e}")
     except httpx.HTTPStatusError as e:
