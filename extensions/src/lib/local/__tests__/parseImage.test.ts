@@ -113,6 +113,29 @@ describe('parseImageOcr', () => {
     await expect(parseImageOcr('data:image/png;base64,AAAA', 'auto', 'ru')).rejects.toThrow('Bad languages');
   });
 
+  it('reports a readable error when the server returns non-JSON (HTML/captcha)', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { blob: async () => new Blob([new Uint8Array([1])], { type: 'image/png' }) } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new SyntaxError('Unexpected token < in JSON at position 0');
+          },
+        } as unknown as Response;
+      }),
+    );
+    await expect(parseImageOcr('data:image/png;base64,AAAA', 'en', 'ru')).rejects.toThrow(
+      'parseImage: invalid JSON response',
+    );
+  });
+
   it('rejects when the image fetch fails (offline fallback trigger)', async () => {
     vi.stubGlobal(
       'fetch',

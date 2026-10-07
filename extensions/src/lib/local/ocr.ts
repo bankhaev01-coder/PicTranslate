@@ -86,10 +86,18 @@ const CORE_FILES = [
 
 const CORE_SHORT = ['relaxedsimd-lstm', 'simd-lstm', 'lstm'] as const;
 
-/** Ошибка SIMD-несоответствия сборки и CPU/браузера — имеет смысл пробовать базовую. */
-function isSimdAbort(e: unknown): boolean {
+/**
+ * Ошибка SIMD-несоответствия сборки и CPU/браузера — имеет смысл пробовать базовую.
+ *
+ * Раньше совпадали любые сообщения со словами `wasm` или `Aborted`: отсутствующий
+ * файл (`failed to fetch …wasm`) или нехватка памяти запускали бесполезный
+ * перебор всех сборок и маскировали настоящую причину. Теперь ловим только
+ * признаки несовместимости инструкций / модуля.
+ * Чистая функция — юнит-тестируется.
+ */
+export function isSimdAbort(e: unknown): boolean {
   const msg = String((e as Error)?.message ?? e);
-  return /missing function|Aborted|DotProduct|wasm/i.test(msg);
+  return /missing function|DotProduct|CompileError|LinkError|RuntimeError: unreachable|illegal instruction/i.test(msg);
 }
 
 /**
@@ -100,7 +108,11 @@ function isSimdAbort(e: unknown): boolean {
  * вместо молчаливого отката на CDN.
  */
 export async function ensureOcr(langs: string[], vendor: VendorManifest | null): Promise<TesseractWorker> {
-  const languageKey = [...langs].sort().join('+') || 'eng';
+  // Пустой список = английский. Проверка установленных моделей и сидирование
+  // идут по тому же списку, что и создание worker (раньше пустой список
+  // проходил проверку, а worker создавался для неустановленного 'eng').
+  const effectiveLangs = langs.length ? langs : ['eng'];
+  const languageKey = [...effectiveLangs].sort().join('+');
   const key = `${languageKey}|${vendor?.ocrModelRevision ?? ''}`;
   if (worker && langsKey === key && workerCoreIdx === coreIdx) return worker;
   await dropWorker();
@@ -114,8 +126,8 @@ export async function ensureOcr(langs: string[], vendor: VendorManifest | null):
   if (!vendor?.tesseract || !vendor.baseUrl) {
     throw new Error('offline OCR asset pack is missing');
   }
-  if (langs.some(lang => !vendor.ocrLangs.includes(lang))) throw new Error('Selected OCR model is not installed');
-  await seedDownloadedOcrModels(langs);
+  if (effectiveLangs.some(lang => !vendor.ocrLangs.includes(lang))) throw new Error('Selected OCR model is not installed');
+  await seedDownloadedOcrModels(effectiveLangs);
   // Полностью офлайн: worker + сборки core + traineddata отдаются из расширения.
   options.workerBlobURL = false;
   options.workerPath = new URL('tesseract/worker.min.js', vendor.baseUrl).href;

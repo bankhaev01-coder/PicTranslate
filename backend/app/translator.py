@@ -89,7 +89,8 @@ async def translate_text(
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError("OpenAI returned no choices")
-        return (choices[0].get("message") or {}).get("content", "").strip()
+        # content бывает null (refusal / tool_calls) — раньше это давало AttributeError.
+        return ((choices[0].get("message") or {}).get("content") or "").strip()
 
     if provider == "gemini":
         if not s.gemini_api_key:

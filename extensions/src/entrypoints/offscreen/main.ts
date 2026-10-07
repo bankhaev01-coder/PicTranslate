@@ -317,12 +317,11 @@ async function localPipeline(
   }
 
   // 1.1) OCR (если текст не пришёл из облака) — либо встроенный tesseract-воркер, либо native host.
+  // Пустой выбор языков = английский, поэтому requestedLangs никогда не пуст;
+  // отсутствие моделей ловит resolveOcrLanguages (выше и ниже).
   const requestedLangs = settings.ocrLangs.length ? settings.ocrLangs : ['eng'];
   let langs = requestedLangs;
   if (!sourceText) {
-    if (!langs.length && !settings.useNativeHost) {
-      return fail(i18n.t('local.errOcrLangMissing', { langs: requestedLangs.join(', ') }));
-    }
     try {
       if (!settings.useNativeHost) {
         langs = resolveOcrLanguages(requestedLangs, vendor?.ocrLangs ?? [], settings.sourceLang);

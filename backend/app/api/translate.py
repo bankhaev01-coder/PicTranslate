@@ -124,7 +124,13 @@ async def translate(
         f"{req.source_lang}:{image_hash(raw)}"
     )
     if cache is not None:
-        cached = cache.get(cache_key)
+        # Кеш — оптимизация: недоступный Redis / битый файл не должен ронять
+        # перевод (redis.from_url подключается лениво, ошибка всплывает здесь).
+        try:
+            cached = cache.get(cache_key)
+        except Exception as e:  # noqa: BLE001
+            log.warning("cache get failed: %s", type(e).__name__)
+            cached = None
         if cached:
             log.info("cache HIT %s", cache_key[:24])
             return JSONResponse(cached)
@@ -166,6 +172,9 @@ async def translate(
 
     payload = out.model_dump(exclude_none=True)
     if cache is not None:
-        cache.set(cache_key, payload, settings.cache_ttl_seconds)
+        try:
+            cache.set(cache_key, payload, settings.cache_ttl_seconds)
+        except Exception as e:  # noqa: BLE001 — готовый перевод важнее записи в кеш
+            log.warning("cache set failed: %s", type(e).__name__)
 
     return JSONResponse(payload)
