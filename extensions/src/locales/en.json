@@ -176,6 +176,7 @@
   },
   "local": {
     "errPairMissing": "Model {{pair}} is missing — download it in settings",
+    "errSourceUnknown": "Couldn't detect the text language — choose the source language in settings or enable an external translator",
     "errModelLoad": "Failed to load the translation model",
     "errMtFailed": "Translation failed",
     "errExternalFailed": "External translation failed",

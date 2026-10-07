@@ -12,7 +12,7 @@ router = APIRouter()
 
 def _local_translation_ready(s, configured: dict[str, bool]) -> bool:
     """Готов ли провайдер перевода для локального (tesseract) пути."""
-    provider = str(getattr(s, "local_translation_provider", "openai") or "none")
+    provider = str(getattr(s, "local_translation_provider", "none") or "none")
     if provider == "none":
         return True  # режим «только OCR» — перевод не нужен
     return configured.get(provider, False)

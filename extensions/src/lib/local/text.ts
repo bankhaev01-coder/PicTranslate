@@ -100,11 +100,15 @@ export interface PickPairResult {
   passthrough: boolean;
   /** Какую пару стоит скачать (её нет в наборе скачанных). */
   missingPair?: string;
+  /** true, если при sourceLang='auto' письмо не ru/en (японский, корейский, ...):
+   *  локальной пары нет, нужен внешний переводчик или явный язык исходника. */
+  unknownSource?: boolean;
 }
 
 /**
  * Выбрать MT-пару для запроса.
- * MVP поддерживает только en<->ru; неизвестные направления отдаются как missingPair.
+ * MVP поддерживает только en<->ru; неизвестные направления отдаются как missingPair,
+ * неопределённое при 'auto' письмо — как unknownSource.
  */
 export function pickPair(input: PickPairInput, downloaded: string[]): PickPairResult {
   const { sourceLang, targetLang, text, preferred, available } = input;
@@ -120,7 +124,11 @@ export function pickPair(input: PickPairInput, downloaded: string[]): PickPairRe
   }
 
   // Авто-определение по эвристике письма: латиница -> *-ru и т.д.
-  const cyrillic = isMostlyCyrillic(text);
+  // Чужое письмо не выдаём за 'en': иначе японский либо возвращался без перевода
+  // (цель en), либо уходил в модель en-ru и превращался в мусор (цель ru).
+  const guessed = guessSourceLang(text);
+  if (!guessed) return { passthrough: false, unknownSource: true };
+  const cyrillic = guessed === 'ru';
   const targetIsCyrillic = targetLang === 'ru' || targetLang === 'uk' || targetLang === 'bg';
 
   if (targetIsCyrillic && cyrillic) return { passthrough: true }; // уже целевое письмо
@@ -170,4 +178,52 @@ export function chunkText(text: string, maxLen = 400): string[] {
   }
   flush();
   return chunks;
+}
+
+
+/**
+ * Язык исходника только там, где мы в нём уверены: 'ru' (кириллица) или 'en'
+ * (латиница). Для других письменностей (японский, корейский, ...) и коротких
+ * строк — null, а не ложный 'en'.
+ */
+export function detectRuEn(text: string): 'ru' | 'en' | null {
+  let latin = 0;
+  let cyr = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (/\p{Script=Latin}/u.test(ch)) latin++;
+    else if (/\p{Script=Cyrillic}/u.test(ch)) cyr++;
+    else if (/\p{L}/u.test(ch)) other++;
+  }
+  const letters = latin + cyr + other;
+  if (letters < 4) return null;
+  if (cyr / letters >= 0.5) return 'ru';
+  if (latin / letters >= 0.8) return 'en';
+  return null;
+}
+
+/**
+ * Направление для выбора MT-пары при sourceLang='auto': 'ru' | 'en', или null, если
+ * среди букв преобладает другая письменность. В отличие от detectRuEn не отказывает
+ * на коротких («OK», «Huh») и смешанных ru/en строках — там работает прежняя эвристика.
+ */
+export function guessSourceLang(text: string): 'ru' | 'en' | null {
+  const sure = detectRuEn(text);
+  if (sure) return sure;
+  let cyr = 0;
+  let lat = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (/\p{Script=Cyrillic}/u.test(ch)) cyr++;
+    else if (/\p{Script=Latin}/u.test(ch)) lat++;
+    else if (/\p{L}/u.test(ch)) other++;
+  }
+  if (other > cyr + lat) return null;
+  // Тот же порог, что в isMostlyCyrillic, но без минимума в 4 буквы: «Да!» — русский.
+  return cyr > 0 && cyr / (cyr + lat) >= 0.4 ? 'ru' : 'en';
+}
+
+/** Язык исходника: явный из настроек, иначе ru/en по письму, иначе null. */
+export function resolveDetectedLanguage(sourceLang: string | undefined, text: string): string | null {
+  return sourceLang && sourceLang !== 'auto' ? sourceLang : detectRuEn(text);
 }

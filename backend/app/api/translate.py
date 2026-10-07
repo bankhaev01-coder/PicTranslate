@@ -97,7 +97,7 @@ async def translate(
     file: UploadFile = File(...),
     target_lang: str = Form(..., min_length=2, max_length=8),
     source_lang: str = Form(default="auto", min_length=2, max_length=8),
-    model: str = Form(default=None),
+    model: str | None = Form(default=None),
     region_only: str = Form(default="false"),
 ):
     """Перевести текст на изображении.
@@ -147,7 +147,7 @@ async def translate(
         result = await _get_queue().submit(adapter.process(raw, req))
         # Внутри try: невалидный ответ модели (ValidationError) — это ошибка
         # провайдера (502), а не необработанный 500.
-        out = result.to_translate_result(adapter_name, result._latency)
+        out = result.to_translate_result(adapter_name, result.latency_ms)
     except HTTPException:
         # Адаптер сам выбрал статус (например, 400 на пустое изображение) — не
         # превращаем его в 502.

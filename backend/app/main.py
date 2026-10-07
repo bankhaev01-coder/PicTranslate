@@ -11,6 +11,7 @@ from app.api.health import router as health_router
 from app.api.models import router as models_router
 from app.api.translate import router as translate_router
 from app.config import cors_rules, get_settings
+from app.translator import aclose_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("translate-ext")
@@ -20,8 +21,11 @@ log = logging.getLogger("translate-ext")
 async def lifespan(app: FastAPI):
     s = get_settings()
     log.info("backend starting: default_mode=%s models=%s", s.default_mode, s.openai_api_key and "openai+ok" or "")
-    yield
-    log.info("backend shutdown")
+    try:
+        yield
+    finally:
+        await aclose_client()
+        log.info("backend shutdown")
 
 
 def create_app() -> FastAPI:

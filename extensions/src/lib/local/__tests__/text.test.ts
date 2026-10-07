@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, isMostlyCyrillic, joinOcrLines, normalizeMtInput, pickPair } from '../text';
+import { chunkText, detectRuEn, guessSourceLang, isMostlyCyrillic, joinOcrLines, normalizeMtInput, pickPair, resolveDetectedLanguage } from '../text';
 
 const AVAILABLE = ['en-ru', 'ru-en'];
 const DOWNLOADED = ['en-ru'];
@@ -141,4 +141,58 @@ describe('normalizeMtInput', () => {
   it('keeps a single-line text unchanged', () => {
     expect(normalizeMtInput('Hello world')).toBe('Hello world');
   });
+});
+
+describe('detectRuEn', () => {
+  it('detects russian', () => expect(detectRuEn('Привет, мир!')).toBe('ru'));
+  it('detects english', () => expect(detectRuEn('Hello, world!')).toBe('en'));
+  it('does not label japanese as english', () => expect(detectRuEn('こんにちは世界')).toBeNull());
+  it('does not guess for very short text', () => expect(detectRuEn('ab')).toBeNull());
+});
+
+describe('resolveDetectedLanguage', () => {
+  it('prefers explicit source language', () => expect(resolveDetectedLanguage('ja', 'Hello, world!')).toBe('ja'));
+  it('auto + cyrillic -> ru', () => expect(resolveDetectedLanguage('auto', 'Привет, мир!')).toBe('ru'));
+  it('auto + latin -> en', () => expect(resolveDetectedLanguage('auto', 'Hello, world!')).toBe('en'));
+  it('auto + japanese -> null', () => expect(resolveDetectedLanguage('auto', 'こんにちは世界')).toBeNull());
+  it('auto + short text -> null', () => expect(resolveDetectedLanguage('auto', 'ab')).toBeNull());
+  it('missing source language behaves like auto', () => expect(resolveDetectedLanguage(undefined, 'Hello, world!')).toBe('en'));
+});
+
+describe('pickPair: unknown script in auto mode', () => {
+  const base = { preferred: 'en-ru', available: AVAILABLE, sourceLang: 'auto' };
+
+  it('japanese + en target is not a passthrough', () => {
+    const r = pickPair({ ...base, targetLang: 'en', text: 'こんにちは世界' }, AVAILABLE);
+    expect(r).toEqual({ passthrough: false, unknownSource: true });
+  });
+
+  it('japanese + ru target does not go through en-ru', () => {
+    const r = pickPair({ ...base, targetLang: 'ru', text: 'こんにちは世界' }, AVAILABLE);
+    expect(r.pair).toBeUndefined();
+    expect(r.unknownSource).toBe(true);
+  });
+
+  it('short russian + en target is translated, not passed through', () => {
+    expect(pickPair({ ...base, targetLang: 'en', text: 'Да!' }, AVAILABLE).pair).toBe('ru-en');
+  });
+
+  it('short latin text keeps the old en-ru behaviour', () => {
+    expect(pickPair({ ...base, targetLang: 'ru', text: 'OK' }, DOWNLOADED).pair).toBe('en-ru');
+  });
+
+  it('explicit source language is not affected', () => {
+    expect(pickPair({ ...base, sourceLang: 'en', targetLang: 'ru', text: 'こんにちは' }, DOWNLOADED).pair).toBe('en-ru');
+  });
+});
+
+describe('guessSourceLang', () => {
+  it('russian', () => expect(guessSourceLang('Привет, мир!')).toBe('ru'));
+  it('english', () => expect(guessSourceLang('Hello, world!')).toBe('en'));
+  it('short latin falls back to en', () => expect(guessSourceLang('OK')).toBe('en'));
+  it('short cyrillic falls back to ru', () => expect(guessSourceLang('Да!')).toBe('ru'));
+  it('japanese -> null', () => expect(guessSourceLang('こんにちは世界')).toBeNull());
+  it('short japanese -> null', () => expect(guessSourceLang('えっ')).toBeNull());
+  it('korean -> null', () => expect(guessSourceLang('안녕하세요')).toBeNull());
+  it('latin-dominated mix stays en', () => expect(guessSourceLang('ドン BOOM')).toBe('en'));
 });

@@ -8,10 +8,16 @@ import { regionToViewport } from './selection';
  * забивала бэкенд. Возвращает только метаданные — байты грузятся позже, чтобы
  * параллелить загрузку и обрабатывать CORS-ошибки по каждому изображению.
  */
+/**
+ * Счётчик id не сбрасывается между сканами: раньше нумерация шла с 0 каждый
+ * раз, и после догрузки картинок тот же <img> получал другой id (а чужой id — его).
+ */
+let nextImageId = 0;
+
 export function scanImages(minSize: number): PageImage[] {
   const out: PageImage[] = [];
   const imgs = Array.from(document.querySelectorAll('img'));
-  let index = 0;
+  const seen = new Set<string>();
 
   for (const img of imgs) {
     const rect = img.getBoundingClientRect();
@@ -25,8 +31,14 @@ export function scanImages(minSize: number): PageImage[] {
     const src = img.currentSrc || img.src;
     if (!src) continue;
 
-    const id = `te-img-${index++}`;
-    img.dataset.translateExtId = id;
+    // Уже назначенный id сохраняем. Дубликат (сайт склонировал узел вместе
+    // с data-атрибутом) получает новый id.
+    let id = img.dataset.translateExtId;
+    if (!id || !id.startsWith('te-img-') || seen.has(id)) {
+      id = `te-img-${nextImageId++}`;
+      img.dataset.translateExtId = id;
+    }
+    seen.add(id);
 
     out.push({
       id,

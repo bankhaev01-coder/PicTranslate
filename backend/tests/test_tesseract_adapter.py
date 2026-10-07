@@ -61,7 +61,7 @@ def test_tesseract_ocr_assembles_text_and_boxes(monkeypatch, settings, png_bytes
     assert calls == [("Hello World", "ru", "auto", "openai")]
     assert len(res.boxes) == 2
     assert res.boxes[0]["x"] == 0
-    assert res._latency >= 0
+    assert res.latency_ms >= 0
 
 
 def test_tesseract_echo_when_provider_none(monkeypatch, settings, png_bytes):
