@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assembleOcrResult, pickBestOcr, scoreOcrResult, type OcrResult } from '../ocr';
+import { assembleOcrResult, isSimdAbort, pickBestOcr, scoreOcrResult, type OcrResult } from '../ocr';
 
 const res = (text: string, confidence: number): OcrResult => ({
   text,
@@ -41,6 +41,23 @@ describe('pickBestOcr', () => {
   it('returns the single candidate when it is the only one', () => {
     const only = res('Hello', 60);
     expect(pickBestOcr([only])).toBe(only);
+  });
+});
+
+describe('isSimdAbort', () => {
+  it('detects SIMD / instruction-set incompatibility', () => {
+    expect(isSimdAbort(new Error('Aborted(missing function: _ZN9tesseract11DotProductSSE)'))).toBe(true);
+    expect(isSimdAbort(new Error('CompileError: WebAssembly.instantiate(): invalid opcode'))).toBe(true);
+    expect(isSimdAbort(new Error('LinkError: import object field'))).toBe(true);
+    expect(isSimdAbort(new Error('RuntimeError: unreachable'))).toBe(true);
+    expect(isSimdAbort('illegal instruction')).toBe(true);
+  });
+
+  it('does not treat missing assets or OOM as SIMD problems', () => {
+    expect(isSimdAbort(new Error('failed to fetch tesseract-core-lstm.wasm'))).toBe(false);
+    expect(isSimdAbort(new Error('Aborted(OOM)'))).toBe(false);
+    expect(isSimdAbort(new Error('Selected OCR model is not installed'))).toBe(false);
+    expect(isSimdAbort(undefined)).toBe(false);
   });
 });
 

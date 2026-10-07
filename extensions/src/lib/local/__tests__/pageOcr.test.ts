@@ -19,6 +19,12 @@ describe('page OCR refinement policy', () => {
   it('narrows Cyrillic-dominant crops to Russian', () => {
     expect(refinementLanguages(['eng', 'rus'], 'Это достаточно длинная фраза на русском языке.', 'auto')).toEqual(['rus']);
   });
+  it('selects only installed Japanese models for Japanese-dominant automatic crops', () => {
+    const selected = ['eng', 'jpn', 'jpn_vert'];
+    expect(refinementLanguages(selected, 'これは日本語の文章です。縦書きにも対応しています。', 'auto')).toEqual(['jpn', 'jpn_vert']);
+    expect(refinementLanguages(['eng', 'jpn'], 'これは日本語の文章です。縦書きにも対応しています。', 'auto')).toEqual(['jpn']);
+    expect(refinementLanguages(['eng'], 'これは日本語の文章です。縦書きにも対応しています。', 'auto')).toEqual(['eng']);
+  });
   it('suppresses tiny artwork fragments after grouping while keeping meaningful short dialogue', () => {
     for (const text of ['pA', 'EM', '(1°', 'у,', 'a', 'J', 'is', '&']) expect(readableDialogue(text)).toBe(false);
     for (const text of ['THEN?', 'I', 'A', 'NO!', 'OK', 'Я', 'ДА!', '?!', '42', 'え', 'I AM HERE']) expect(readableDialogue(text)).toBe(true);

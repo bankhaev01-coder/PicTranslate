@@ -40,6 +40,49 @@ export interface ExternalMtResult {
   detected?: string;
 }
 
+/* ── Таймаут + внешняя отмена ─────────────────────────────── */
+
+interface LinkedAbort {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  cleanup: () => void;
+}
+
+/**
+ * Объединить таймаут и внешний signal в один AbortSignal.
+ * Раньше слушатель `abort` на внешнем signal не снимался (утечка на каждый
+ * фрагмент), уже отменённый signal игнорировался, а отмена пользователем
+ * выдавалась за «request timed out».
+ */
+function linkAbort(signal: AbortSignal | undefined, timeoutMs: number): LinkedAbort {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/** Читаемая ошибка прерванного запроса: таймаут или отмена вызывающим. */
+function abortedError(prefix: string, link: LinkedAbort): Error {
+  return new Error(link.timedOut() ? `${prefix}: request timed out` : `${prefix}: request cancelled`);
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
 const GTX_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
 
 /** Нормализовать код языка настроек к кодам Google (регион отбрасывается). */
@@ -157,18 +200,17 @@ async function fetchGoogleChunk(
 ): Promise<GtxParsed> {
   const { signal, timeoutMs = 30_000, fetchImpl } = options;
   const fetchFn = fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
+  const link = linkAbort(signal, timeoutMs);
   try {
-    const resp = await fetchFn(buildGtxUrl(text, source, target), { signal: controller.signal });
+    if (link.signal.aborted) throw abortedError('gtx', link);
+    const resp = await fetchFn(buildGtxUrl(text, source, target), { signal: link.signal });
     if (!resp.ok) throw new Error(`gtx: HTTP ${resp.status}`);
     return parseGtxResponse(await resp.json());
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') throw new Error('gtx: request timed out');
+    if (isAbortError(err)) throw abortedError('gtx', link);
     throw err;
   } finally {
-    clearTimeout(timer);
+    link.cleanup();
   }
 }
 
@@ -180,26 +222,23 @@ async function fetchYandexChunk(
 ): Promise<YandexParsed> {
   const { signal, timeoutMs = 30_000, fetchImpl } = options;
   const fetchFn = fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
   const { url, body } = buildYandexRequest(text, source, target, yandexRequestId());
+  const link = linkAbort(signal, timeoutMs);
   try {
+    if (link.signal.aborted) throw abortedError('yandex', link);
     const resp = await fetchFn(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
-      signal: controller.signal,
+      signal: link.signal,
     });
     if (!resp.ok) throw new Error(`yandex: HTTP ${resp.status}`);
     return parseYandexResponse(await resp.json());
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('yandex: request timed out');
-    }
+    if (isAbortError(err)) throw abortedError('yandex', link);
     throw err;
   } finally {
-    clearTimeout(timer);
+    link.cleanup();
   }
 }
 
@@ -258,9 +297,6 @@ async function fetchYandexCloudChunk(
   const { signal, timeoutMs = 30_000, fetchImpl, yandexCloudApiKey } = options;
   if (!yandexCloudApiKey) throw new Error('yandex-cloud: API key is not configured');
   const fetchFn = fetchImpl ?? fetch;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
   const body = {
     texts: [text],
     targetLanguageCode: toYandexCloudLang(target),
@@ -268,7 +304,9 @@ async function fetchYandexCloudChunk(
       ? {}
       : { sourceLanguageCode: toYandexCloudLang(source) }),
   };
+  const link = linkAbort(signal, timeoutMs);
   try {
+    if (link.signal.aborted) throw abortedError('yandex-cloud', link);
     const resp = await fetchFn(YANDEX_CLOUD_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -276,17 +314,15 @@ async function fetchYandexCloudChunk(
         Authorization: `Api-Key ${yandexCloudApiKey}`,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: link.signal,
     });
     if (!resp.ok) throw new Error(`yandex-cloud: HTTP ${resp.status}`);
     return parseYandexCloudResponse(await resp.json());
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('yandex-cloud: request timed out');
-    }
+    if (isAbortError(err)) throw abortedError('yandex-cloud', link);
     throw err;
   } finally {
-    clearTimeout(timer);
+    link.cleanup();
   }
 }
 
@@ -304,6 +340,8 @@ export async function translateLongText(
   const parts: string[] = [];
   let detected: string | undefined;
   for (const chunk of chunks) {
+    // Отмена между фрагментами: не отправляем оставшиеся запросы.
+    if (options.signal?.aborted) throw new Error('external MT: request cancelled');
     const { translation, sourceLang: sl } = await fetchChunk(chunk, sourceLang, targetLang, options);
     parts.push(translation);
     if (!detected && sl && sourceLang === 'auto') detected = sl;

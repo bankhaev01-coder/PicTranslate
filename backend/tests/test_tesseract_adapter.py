@@ -40,6 +40,16 @@ def settings():
 def test_tesseract_ocr_assembles_text_and_boxes(monkeypatch, settings, png_bytes):
     fake = _FakePytesseract([("Hello", 0, 0), ("World", 30, 0)])
     monkeypatch.setattr("app.models.tesseract_adapter.pytesseract", fake)
+    # Тест не должен зависеть от провайдера по умолчанию и наличия API-ключа:
+    # провайдер задаётся явно, сетевой перевод подменяется.
+    monkeypatch.setattr(settings, "local_translation_provider", "openai")
+    calls = []
+
+    async def fake_translate(text, target_lang, source_lang="auto", provider=None):
+        calls.append((text, target_lang, source_lang, provider))
+        return "Привет мир"
+
+    monkeypatch.setattr("app.models.tesseract_adapter.translate_text", fake_translate)
 
     adapter = TesseractAdapter.from_settings(settings)
     req = TranslateRequest(target_lang="ru", source_lang="auto")
@@ -47,6 +57,8 @@ def test_tesseract_ocr_assembles_text_and_boxes(monkeypatch, settings, png_bytes
     res = asyncio.run(adapter.process(png_bytes, req))
 
     assert res.source_text == "Hello World"
+    assert res.translation == "Привет мир"
+    assert calls == [("Hello World", "ru", "auto", "openai")]
     assert len(res.boxes) == 2
     assert res.boxes[0]["x"] == 0
     assert res._latency >= 0

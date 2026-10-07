@@ -32,6 +32,12 @@ export default function AiSection({ settings, patch }: Props) {
         return;
       }
       const parsed = new URL(urlStr);
+      // host-разрешения имеют смысл только для http(s); для file:, chrome: и т.п.
+      // permissions.request бросает невнятную ошибку о неверном шаблоне.
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        setPermStatus(`${t('options.permError')}: only http(s) URLs are supported`);
+        return;
+      }
       const origin = `${parsed.protocol}//${parsed.host}/*`;
       const granted = await browser.permissions.request({
         origins: [origin],

@@ -1,4 +1,4 @@
-import type { Box } from '../types';
+import type { Box, JapaneseOcrLayout } from '../types';
 import { joinOcrLines } from './text';
 
 /** Raster barrier check is optional for native OCR; coordinates are image pixels. */
@@ -6,7 +6,7 @@ export type SeparatesLines = (upper: Box, lower: Box) => boolean;
 
 export function validTextBox(box: Box): boolean {
   return [box.x, box.y, box.width, box.height].every(Number.isFinite)
-    && box.width > 0 && box.height > 0 && /[\p{L}\p{N}!?…]/u.test(box.text ?? '');
+    && box.width > 0 && box.height > 0 && /[\p{L}\p{N}!?…。、]/u.test(box.text ?? '');
 }
 
 /** Conservative horizontal-dialogue grouping, not a universal balloon detector.
@@ -14,9 +14,50 @@ export function validTextBox(box: Box): boolean {
  * Never combines same-row neighbouring columns. Optional raster veto keeps a
  * panel/bubble border between two close text stacks from being crossed.
  */
-export function groupDialogueBoxes(boxes: readonly Box[], separates?: SeparatesLines): Box[] {
-  const sorted = boxes.filter(validTextBox).map(b => ({ ...b, text: (b.text ?? '').trim() }))
-    .sort((a, b) => a.y - b.y || a.x - b.x);
+export function groupDialogueBoxes(boxes: readonly Box[], separates?: SeparatesLines,
+  layout: JapaneseOcrLayout = 'auto'): Box[] {
+  const valid = boxes.filter(validTextBox).map(b => ({ ...b, text: (b.text ?? '').trim() }));
+  const vertical = valid.filter(box => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}。、]/u.test(box.text ?? ''));
+  const tallJapanese = vertical.filter(box => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(box.text ?? '')
+    && box.height >= box.width * 1.2);
+  const verticalMode = vertical.length > 0
+    && (layout === 'vertical' || (layout === 'auto' && tallJapanese.length >= 2));
+  if (verticalMode) {
+    const glyphWidth = Math.max(...vertical.map(box => box.width));
+    const columns: Box[][] = [];
+    for (const glyph of [...vertical].sort((a, b) => b.x - a.x || a.y - b.y)) {
+      const column = columns.find(items => {
+        const nearest = items[items.length - 1];
+        return Math.abs((nearest.x + nearest.width / 2) - (glyph.x + glyph.width / 2)) <= glyphWidth * 1.25
+          && glyph.y >= nearest.y + nearest.height - glyph.height * 0.25
+          && glyph.y - (nearest.y + nearest.height) <= glyph.height * 0.9
+          && !separates?.(nearest, glyph);
+      });
+      if (column) column.push(glyph); else columns.push([glyph]);
+    }
+    const orderedColumns = columns.map(column => {
+      const x = Math.min(...column.map(box => box.x));
+      const y = Math.min(...column.map(box => box.y));
+      return { boxes: column, x, y,
+        width: Math.max(...column.map(box => box.x + box.width)) - x,
+        height: Math.max(...column.map(box => box.y + box.height)) - y };
+    });
+    const columnGap = orderedColumns.length > 1
+      ? orderedColumns[0].x - (orderedColumns[1].x + orderedColumns[1].width)
+      : Infinity;
+    if (orderedColumns.length > 1 && columnGap <= glyphWidth * 3) {
+      const boxesInReadingOrder = orderedColumns.flatMap(column => column.boxes.sort((a, b) => a.y - b.y));
+      const x = Math.min(...boxesInReadingOrder.map(box => box.x));
+      const y = Math.min(...boxesInReadingOrder.map(box => box.y));
+      return [{ x, y,
+        width: Math.max(...boxesInReadingOrder.map(box => box.x + box.width)) - x,
+        height: Math.max(...boxesInReadingOrder.map(box => box.y + box.height)) - y,
+        text: boxesInReadingOrder.map(box => box.text ?? '').join('') }];
+    }
+    return orderedColumns.map(column => ({ ...column, text: column.boxes
+      .sort((a, b) => a.y - b.y).map(box => box.text ?? '').join('') }));
+  }
+  const sorted = valid.sort((a, b) => a.y - b.y || a.x - b.x);
   const groups: Box[][] = [];
   for (const line of sorted) {
     let chosen: Box[] | undefined;

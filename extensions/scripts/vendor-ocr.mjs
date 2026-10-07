@@ -25,7 +25,19 @@ for (const [dir, name] of [[worker, 'LICENSE'], [core, 'LICENSE']]) {
   try { await fs.copyFile(path.join(dir, name), path.join(out, 'tesseract', dir === worker ? 'LICENSE-tesseract.js' : 'LICENSE-core')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
-const languages = ['eng', 'rus'];
+const supportedLanguages = ['eng', 'rus', 'jpn', 'jpn_vert', 'chi_sim', 'kor', 'chi_tra', 'deu', 'fra', 'spa', 'ita'];
+const requestedLanguages = process.env.TRANSLATE_OCR_LANGS
+  ? process.env.TRANSLATE_OCR_LANGS.split(',').map(lang => lang.trim()).filter(Boolean)
+  : ['eng', 'rus'];
+const languages = [...new Set(requestedLanguages)];
+const unknownLanguages = languages.filter(lang => !supportedLanguages.includes(lang));
+if (unknownLanguages.length) throw new Error(`Unsupported OCR language(s): ${unknownLanguages.join(', ')}`);
+if (!languages.length) throw new Error('Select at least one OCR language with TRANSLATE_OCR_LANGS');
+for (const entry of await fs.readdir(path.join(out, 'tessdata'), { withFileTypes: true })) {
+  if (entry.isFile() && entry.name.endsWith('.traineddata.gz') && !languages.includes(entry.name.slice(0, -'.traineddata.gz'.length))) {
+    await fs.rm(path.join(out, 'tessdata', entry.name));
+  }
+}
 for (const lang of languages) {
   const target = path.join(out, 'tessdata', `${lang}.traineddata.gz`);
   let bytes;
@@ -45,7 +57,8 @@ try { previous = JSON.parse(await fs.readFile(path.join(out, 'vendor.json'), 'ut
 catch (error) { if (error.code !== 'ENOENT') throw error; }
 await fs.writeFile(path.join(out, 'vendor.json'), JSON.stringify({
   ...previous, version: 1, baseUrl: '', pairs: previous.pairs ?? [],
-  ocrLangs: [...new Set([...(previous.ocrLangs ?? []), ...languages])],
+  ocrLangs: languages,
+  bundledOcrLangs: languages,
   tesseract: true, createdAt: new Date().toISOString(),
 }, null, 2));
 console.log('OCR pack ready. No local NMT models downloaded. Use external text MT or AI explicitly.');

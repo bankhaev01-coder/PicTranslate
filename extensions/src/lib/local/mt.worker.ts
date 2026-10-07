@@ -98,7 +98,9 @@ async function doForget(msg: WorkerIn): Promise<void> {
     translateFn = null;
     readyModel = '';
   }
-  postMessage({ op: 'forgot', model });
+  // id обязателен: MtClient сопоставляет ответы с ожидающими промисами по id —
+  // без него forget() никогда не завершался.
+  postMessage({ op: 'forgot', id: msg.id, model });
 }
 
 async function dispatch(msg: WorkerIn): Promise<void> {

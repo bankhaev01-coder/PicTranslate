@@ -85,8 +85,9 @@ export function parseParseImageJson(json: unknown): CloudOcrText {
 
 /**
  * Отправить data URL (кроп области) в parseImage и вернуть тексты.
- * Бросает при сетевой ошибке, таймауте, HTTP != 200 или `err` в ответе —
- * вызывающий код (localPipeline) перехватывает и уходит на локальный OCR.
+ * Бросает при сетевой ошибке, таймауте, HTTP != 200, не-JSON ответе или `err`
+ * в ответе — вызывающий код (localPipeline) перехватывает и уходит на
+ * локальный OCR.
  */
 export async function parseImageOcr(
   dataUrl: string,
@@ -106,5 +107,13 @@ export async function parseImageOcr(
     signal: AbortSignal.timeout(PARSE_IMAGE_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`parseImage: HTTP ${res.status}`);
-  return parseParseImageJson(await res.json());
+  // Сторонний сервер при блокировке/капче может отдать HTML со статусом 200:
+  // вместо невнятного SyntaxError — понятная причина в логе.
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error('parseImage: invalid JSON response');
+  }
+  return parseParseImageJson(json);
 }

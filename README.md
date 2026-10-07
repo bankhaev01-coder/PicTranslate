@@ -23,7 +23,7 @@
 
 <img width="280" alt="Перевод 22 страниц" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" />
 
-[Смотреть демонстрационное видео](assets/demo.mkv)
+[Смотреть демонстрационное видео](https://github.com/bankhaev01-coder/PicTranslate/raw/refs/heads/main/assets/demo.mkv)
 
 
 ## Что работает локально

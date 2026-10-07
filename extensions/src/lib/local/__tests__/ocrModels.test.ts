@@ -50,6 +50,9 @@ describe('explicit source language safety', () => {
   });
   it('narrows Japanese recognition to selected installed Japanese models', () => {
     expect(resolveOcrLanguages(['eng', 'jpn', 'jpn_vert'], ['eng', 'jpn', 'jpn_vert'], 'ja')).toEqual(['jpn', 'jpn_vert']);
+    expect(resolveOcrLanguages(['eng', 'jpn'], ['eng', 'jpn'], 'ja')).toEqual(['jpn']);
+    expect(resolveOcrLanguages(['eng', 'jpn_vert'], ['eng', 'jpn_vert'], 'ja')).toEqual(['jpn_vert']);
     expect(resolveOcrLanguages(['eng'], ['eng'], 'auto')).toEqual(['eng']);
+    expect(() => resolveOcrLanguages(['eng', 'jpn'], ['eng'], 'auto')).toThrow('jpn');
   });
 });

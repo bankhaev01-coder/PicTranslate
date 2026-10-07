@@ -78,7 +78,9 @@ export async function fetchImageBlob(src: string): Promise<ImageFetchResult> {
   } catch (e) {
     // CORS/Cloudflare-сбои маскируются браузером под «TypeError: Failed to fetch»:
     // статус через fetch недоступен, вызывающая сторона предлагает скриншот-флоу.
-    return { ok: false, kind: 'cors', detail: String((e as Error)?.name ?? 'Error') };
+    // Офлайн — единственный случай, когда сеть можно уверенно отличить от CORS.
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    return { ok: false, kind: offline ? 'network' : 'cors', detail: String((e as Error)?.name ?? 'Error') };
   }
 }
 
@@ -163,51 +165,57 @@ export async function cropRegion(
   scrollAtCapture: { x: number; y: number } = { x: 0, y: 0 },
 ): Promise<Blob> {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  const viewportSize = { width: window.innerWidth, height: window.innerHeight };
-  const viewport = regionToViewport(region.bounds, scrollAtCapture, viewportSize);
-  const geom = computeCropSize(
-    { width: bitmap.width, height: bitmap.height },
-    viewport,
-    viewportSize,
-  );
-  const { sx, sy, sw, sh, outW, outH } = geom;
-  // Исходник -> канва: 1, когда кап длинной стороны не сработал.
-  const fit = sw > 0 ? outW / sw : 1;
-
   const canvas = document.createElement('canvas');
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('no 2d context');
+  // ImageBitmap держит декодированный скриншот (десятки МБ при DPR 2) до GC:
+  // закрываем явно, даже если отрисовка упала.
+  try {
+    const viewportSize = { width: window.innerWidth, height: window.innerHeight };
+    const viewport = regionToViewport(region.bounds, scrollAtCapture, viewportSize);
+    const geom = computeCropSize(
+      { width: bitmap.width, height: bitmap.height },
+      viewport,
+      viewportSize,
+    );
+    const { sx, sy, sw, sh, outW, outH } = geom;
+    // Исходник -> канва: 1, когда кап длинной стороны не сработал.
+    const fit = sw > 0 ? outW / sw : 1;
 
-  // Белая подложка: прозрачные пиксели PNG не путают vision-модели.
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, outW, outH);
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no 2d context');
 
-  // CSS-пиксели вьюпорта -> локальные пиксели канвы: точки лассо хранятся
-  // в документных, поэтому приводим к вьюпорту кадра, затем к вырезке и fit.
-  const local = (p: Point): Point => ({
-    x: ((p.x - scrollAtCapture.x) * geom.effScale - sx) * fit,
-    y: ((p.y - scrollAtCapture.y) * geom.effScale - sy) * fit,
-  });
+    // Белая подложка: прозрачные пиксели PNG не путают vision-модели.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, outW, outH);
 
-  ctx.save();
-  ctx.beginPath();
-  if (region.shape === 'oval') {
-    ctx.ellipse(outW / 2, outH / 2, outW / 2, outH / 2, 0, 0, Math.PI * 2);
-  } else if (region.shape === 'lasso' && region.points && region.points.length > 2) {
-    const pts = region.points.map(local);
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
-    ctx.closePath();
-  } else {
-    ctx.rect(0, 0, outW, outH);
+    // CSS-пиксели вьюпорта -> локальные пиксели канвы: точки лассо хранятся
+    // в документных, поэтому приводим к вьюпорту кадра, затем к вырезке и fit.
+    const local = (p: Point): Point => ({
+      x: ((p.x - scrollAtCapture.x) * geom.effScale - sx) * fit,
+      y: ((p.y - scrollAtCapture.y) * geom.effScale - sy) * fit,
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    if (region.shape === 'oval') {
+      ctx.ellipse(outW / 2, outH / 2, outW / 2, outH / 2, 0, 0, Math.PI * 2);
+    } else if (region.shape === 'lasso' && region.points && region.points.length > 2) {
+      const pts = region.points.map(local);
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y);
+      ctx.closePath();
+    } else {
+      ctx.rect(0, 0, outW, outH);
+    }
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, outW, outH);
+    ctx.restore();
+  } finally {
+    bitmap.close?.();
   }
-  ctx.clip();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, outW, outH);
-  ctx.restore();
 
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('toBlob failed'))), 'image/png'),

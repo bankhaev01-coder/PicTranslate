@@ -239,7 +239,19 @@ async function main() {
   // optional-пакеты (chi_sim, kor, ...) качаются только при TRANSLATE_VENDOR_EXTRA=1,
   // чтобы базовая сборка не разрасталась на десятки мегабайт.
   const withExtra = process.env.TRANSLATE_VENDOR_EXTRA === '1';
-  const ocrLangs = registry.ocrLangs.filter((l) => !l.optional || withExtra);
+  const requestedOcrLangs = process.env.TRANSLATE_OCR_LANGS
+    ? [...new Set(process.env.TRANSLATE_OCR_LANGS.split(',').map((lang) => lang.trim()).filter(Boolean))]
+    : registry.ocrLangs.filter((l) => !l.optional || withExtra).map((l) => l.id);
+  const knownOcrLangs = new Set(registry.ocrLangs.map((lang) => lang.id));
+  const unknownOcrLangs = requestedOcrLangs.filter((lang) => !knownOcrLangs.has(lang));
+  if (unknownOcrLangs.length) throw new Error(`Unsupported OCR language(s): ${unknownOcrLangs.join(', ')}`);
+  if (!requestedOcrLangs.length) throw new Error('Select at least one OCR language with TRANSLATE_OCR_LANGS');
+  const ocrLangs = requestedOcrLangs.map((id) => registry.ocrLangs.find((lang) => lang.id === id));
+  for (const entry of fs.readdirSync(path.join(PUBLIC, 'tessdata'), { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.traineddata.gz') && !requestedOcrLangs.includes(entry.name.slice(0, -'.traineddata.gz'.length))) {
+      fs.rmSync(path.join(PUBLIC, 'tessdata', entry.name));
+    }
+  }
   if (withExtra) console.log('  TRANSLATE_VENDOR_EXTRA=1 — включены необязательные пакеты');
   for (const lang of ocrLangs) {
     const dest = path.join(PUBLIC, 'tessdata', `${lang.id}.traineddata.gz`);
@@ -277,6 +289,7 @@ async function main() {
     pairs: registry.pairs.map((p) => p.id),
     // Только реально скачанные языки: UI блокирует чекбоксы остальных.
     ocrLangs: ocrLangs.map((l) => l.id),
+    bundledOcrLangs: ocrLangs.map((l) => l.id),
     tesseract: true,
     createdAt: new Date().toISOString(),
   };

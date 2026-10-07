@@ -1,11 +1,16 @@
 """Настройки приложения, загружаемые из окружения (.env)."""
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Annotated
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# По умолчанию бэкенд доступен только самому расширению (Chrome / Firefox),
+# а не любому сайту. Явный "*" в ALLOWED_ORIGINS по-прежнему открывает всё.
+DEFAULT_ALLOWED_ORIGINS = ["chrome-extension://*", "moz-extension://*"]
 
 
 class Settings(BaseSettings):
@@ -33,7 +38,7 @@ class Settings(BaseSettings):
     ocr_dpi: int = 300
 
     # ── Провайдер перевода для локального OCR-пути ──
-    local_translation_provider: str = "openai"  # none | openai | gemini | custom
+    local_translation_provider: str = "openai"  # none | openai | gemini
 
     # ── Кеш ──
     redis_url: str = ""
@@ -41,8 +46,9 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 86400
 
     # ── CORS ── (NoDecode: pydantic-settings не должен JSON-декодить эту
-    # переменную окружения; валидатор ниже сам разбивает список по запятым)
-    allowed_origins: Annotated[list[str], NoDecode] = ["*"]
+    # переменную окружения; валидатор ниже сам разбивает список по запятым).
+    # Элементы с '*' внутри (например "chrome-extension://*") — шаблоны.
+    allowed_origins: Annotated[list[str], NoDecode] = list(DEFAULT_ALLOWED_ORIGINS)
 
     # ── Лимиты ──
     max_image_bytes: int = 5 * 1024 * 1024
@@ -57,7 +63,27 @@ class Settings(BaseSettings):
     def _parse_origins(cls, v: object) -> list[str]:
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
-        return list(v) if isinstance(v, (list, tuple)) else ["*"]
+        return list(v) if isinstance(v, (list, tuple)) else list(DEFAULT_ALLOWED_ORIGINS)
+
+
+def cors_rules(origins: list[str]) -> tuple[list[str], str | None]:
+    """Разделить ALLOWED_ORIGINS на точные origin'ы и regex для шаблонов.
+
+    Starlette сравнивает allow_origins буквально, поэтому "chrome-extension://*"
+    из .env.example раньше не совпадал ни с одним реальным расширением.
+    Шаблоны с '*' превращаются в allow_origin_regex ('*' = один сегмент без '/').
+    Одиночный "*" оставляется как есть (разрешить всё).
+    """
+    if "*" in origins:
+        return ["*"], None
+    exact = [o for o in origins if "*" not in o]
+    patterns = [
+        re.escape(o).replace(r"\*", r"[^/]+")
+        for o in origins
+        if "*" in o
+    ]
+    regex = f"^(?:{'|'.join(patterns)})$" if patterns else None
+    return exact, regex
 
 
 @lru_cache

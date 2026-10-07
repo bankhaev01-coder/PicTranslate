@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.models import router as models_router
 from app.api.translate import router as translate_router
-from app.config import get_settings
+from app.config import cors_rules, get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("translate-ext")
@@ -28,12 +28,16 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Translate-Image Backend", version="0.1.0", lifespan=lifespan)
     s = get_settings()
 
-    allow_credentials = False if s.allowed_origins == ["*"] else True
+    origins, origin_regex = cors_rules(s.allowed_origins)
+    if origins == ["*"]:
+        log.warning("CORS: ALLOWED_ORIGINS='*' — бэкенд доступен любому сайту")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=s.allowed_origins,
-        allow_credentials=allow_credentials,
-        allow_methods=["*"],
+        allow_origins=origins,
+        allow_origin_regex=origin_regex,
+        # Куки/авторизация браузера бэкенду не нужны — не разрешаем их никогда.
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 

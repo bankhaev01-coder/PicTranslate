@@ -38,8 +38,17 @@ export async function translateImage(params: TranslateParams): Promise<Translate
   form.append('region_only', regionOnly ? 'true' : 'false');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  // Внешняя отмена: если сигнал уже отменён, addEventListener никогда не сработает,
+  // поэтому отменяем сразу. Слушатель снимаем в finally, чтобы не копить их на
+  // долгоживущем сигнале.
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
     const res = await fetch(`${backendUrl.replace(/\/$/, '')}/translate`, {
@@ -60,11 +69,21 @@ export async function translateImage(params: TranslateParams): Promise<Translate
 
     return (await res.json()) as TranslateResult;
   } catch (e: unknown) {
-    const msg = e instanceof Error && e.name === 'AbortError' ? 'Request timed out' : String(e);
-    return errorResult(msg);
+    return errorResult(abortMessage(e, timedOut));
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
   }
+}
+
+/**
+ * Текст ошибки для исключения fetch. Отмена пользователем больше не выдаётся
+ * за таймаут. Чистая функция — юнит-тестируется.
+ */
+export function abortMessage(e: unknown, timedOut: boolean): string {
+  const isAbort = e instanceof Error && e.name === 'AbortError';
+  if (!isAbort) return String(e);
+  return timedOut ? 'Request timed out' : 'Request cancelled';
 }
 
 /** GET /health — используется в Настройках для проверки соединения. */

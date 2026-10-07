@@ -37,6 +37,11 @@ describe('offscreen dialogue composition', () => {
     expect(mocks.translate).toHaveBeenCalledExactlyOnceWith('THE ABILITY TO SEE THROUGH FALSEHOODS?', 'en', 'ru', expect.any(Object));
     expect(mocks.ensurePair).not.toHaveBeenCalled(); expect(mocks.localTranslate).not.toHaveBeenCalled();
   });
+  it('passes the OCR confidence threshold to the native host', async () => {
+    await dispatch();
+    expect(mocks.native).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'ocr', min_confidence: settings.ocrMinConfidence ?? 40 }));
+  });
   it('keeps one failed dialogue untranslated rather than copying another dialogue into it', async () => {
     mocks.native.mockResolvedValue({ ...native, boxes: [...native.boxes,
       { x: 300, y: 100, width: 100, height: 20, text: 'ANOTHER BUBBLE' }] });

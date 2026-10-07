@@ -86,8 +86,11 @@ export default function App() {
         type: 'CAPTURE_AND_TRANSLATE',
         ...(tab?.id != null ? { tabId: tab.id } : {}),
       });
-      setShot(res);
-      if (!res.error) window.close();
+      setShot(res ?? null);
+      if (res && !res.error) window.close();
+    } catch (e) {
+      // Раньше ошибка отправки сообщения терялась: кнопка просто «отжималась».
+      setNote(`${t('common.error')}: ${String(e)}`);
     } finally {
       setBusy(false);
     }

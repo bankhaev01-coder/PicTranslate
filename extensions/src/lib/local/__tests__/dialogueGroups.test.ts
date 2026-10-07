@@ -19,6 +19,29 @@ describe('groupDialogueBoxes', () => {
   it('separates vertically distant dialogue', () => {
     expect(groupDialogueBoxes([line('ONE'), line('TWO', 10, 40)])).toHaveLength(2);
   });
+  it('reads Japanese vertical columns top-to-bottom and right-to-left, keeping punctuation attached', () => {
+    const glyphs = [
+      line('左', 70, 10, 10, 20), line('右', 100, 10, 10, 20),
+      line('列', 100, 32, 10, 20), line('。', 100, 54, 10, 10),
+      line('文', 70, 32, 10, 20),
+    ];
+    expect(groupDialogueBoxes(glyphs).map(box => box.text)).toEqual(['右列。左文']);
+  });
+  it('keeps separate vertical columns as separate dialogue blocks', () => {
+    const glyphs = [line('右', 100, 10, 10, 20), line('列', 100, 32, 10, 20),
+      line('左', 20, 10, 10, 20), line('列', 20, 32, 10, 20)];
+    expect(groupDialogueBoxes(glyphs).map(box => box.text)).toEqual(['右列', '左列']);
+  });
+  it('disables vertical grouping in horizontal mode', () => {
+    const glyphs = [line('右', 100, 10, 10, 20), line('列', 100, 32, 10, 20),
+      line('左', 20, 10, 10, 20), line('列', 20, 32, 10, 20)];
+    expect(groupDialogueBoxes(glyphs, undefined, 'horizontal').map(box => box.text)).toEqual(['左列', '右列']);
+  });
+  it('forces vertical grouping in vertical mode', () => {
+    const glyphs = [line('右', 100, 10, 10, 20), line('列', 100, 32, 10, 20),
+      line('左', 20, 10, 10, 20), line('列', 20, 32, 10, 20)];
+    expect(groupDialogueBoxes(glyphs, undefined, 'vertical').map(box => box.text)).toEqual(['右列', '左列']);
+  });
   it('checks the gap immediately before, at and after the grouping boundary', () => {
     expect(groupDialogueBoxes([line('ONE'), line('TWO', 10, 32.79)])).toHaveLength(1);
     expect(groupDialogueBoxes([line('ONE'), line('TWO', 10, 32.8)])).toHaveLength(1);

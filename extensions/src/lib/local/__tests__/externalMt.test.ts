@@ -19,6 +19,22 @@ function okFetch(body: unknown) {
   return (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as typeof fetch;
 }
 
+/** fetch, который висит до отмены своего signal и тогда падает с AbortError (как настоящий fetch). */
+function hangingFetch(onCall?: () => void) {
+  return ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      onCall?.();
+      const sig = init?.signal;
+      const fail = () => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      };
+      if (sig?.aborted) fail();
+      else sig?.addEventListener('abort', fail, { once: true });
+    })) as unknown as typeof fetch;
+}
+
 describe('toGoogleLang', () => {
   it('passes plain codes through', () => {
     expect(toGoogleLang('ru')).toBe('ru');
@@ -88,6 +104,37 @@ describe('translateLongText', () => {
   it('throws a readable error on HTTP failure', async () => {
     const fetchImpl = (async () => ({ ok: false, status: 500 })) as unknown as typeof fetch;
     await expect(translateLongText('Hello', 'en', 'ru', { fetchImpl })).rejects.toThrow(/HTTP 500/);
+  });
+});
+
+describe('translateLongText cancellation', () => {
+  it('already aborted signal → cancelled, no network calls', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      translateLongText('Hello', 'en', 'ru', {
+        signal: controller.signal,
+        fetchImpl: hangingFetch(() => calls++),
+      }),
+    ).rejects.toThrow(/cancelled/);
+    expect(calls).toBe(0);
+  });
+
+  it('user cancel during a request is reported as cancelled, not timeout', async () => {
+    const controller = new AbortController();
+    const p = translateLongText('Hello', 'en', 'ru', {
+      signal: controller.signal,
+      timeoutMs: 10_000,
+      fetchImpl: hangingFetch(() => setTimeout(() => controller.abort(), 0)),
+    });
+    await expect(p).rejects.toThrow(/gtx: request cancelled/);
+  });
+
+  it('timeout is reported as timed out', async () => {
+    await expect(
+      translateLongText('Hello', 'en', 'ru', { timeoutMs: 5, fetchImpl: hangingFetch() }),
+    ).rejects.toThrow(/gtx: request timed out/);
   });
 });
 

@@ -32,6 +32,9 @@ extensions/public/tesseract/
 extensions/public/ort/
 extensions/public/vendor.json
 
+# Native host: файлы, которые генерирует install_host.bat (содержат локальные пути и ID расширения)
+native_host/com.manga.translate.host.json
+native_host/host_launcher.bat
 
 # IDE / OS
 .vscode/
