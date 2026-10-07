@@ -23,6 +23,8 @@
 
 <img width="280" alt="Перевод 22 страниц" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" />
 
+<img width="380" alt="Перевод реплик на странице манги" src="assets/manga-22-pages.png" />
+
 [Смотреть демонстрационное видео](https://github.com/bankhaev01-coder/PicTranslate/raw/refs/heads/main/assets/demo.mkv)
 
 
