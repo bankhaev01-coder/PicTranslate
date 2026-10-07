@@ -15,15 +15,13 @@ import type {
 export default defineBackground(() => {
   /* ── контекстное меню ── */
   browser.runtime.onInstalled.addListener(() => {
-    browser.contextMenus.create({
-      id: 'translate-images',
-      title: 'Translate images on this page',
-      contexts: ['page', 'image'],
-    });
+    // onInstalled срабатывает и при обновлении/перезагрузке расширения: старый пункт
+    // с тем же id дал бы ошибку «duplicate id». Поэтому сначала убираем все пункты.
+    void setupContextMenu();
   });
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
-    if (info.menuItemId === 'translate-images' && tab?.id != null) {
+    if (info.menuItemId === MENU_TRANSLATE_IMAGES && tab?.id != null) {
       try {
         await ensureContentScript(tab.id);
         await browser.tabs.sendMessage(tab.id, { type: 'SCAN_IMAGES' } satisfies ContentMsg);
@@ -44,17 +42,52 @@ export default defineBackground(() => {
   });
 });
 
-async function handle(
-  msg: Msg,
-  sender: { tab?: { id?: number; windowId?: number } },
-): Promise<unknown> {
+const MENU_TRANSLATE_IMAGES = 'translate-images';
+
+async function setupContextMenu(): Promise<void> {
+  try {
+    await browser.contextMenus.removeAll();
+    browser.contextMenus.create({
+      id: MENU_TRANSLATE_IMAGES,
+      title: 'Translate images on this page',
+      contexts: ['page', 'image'],
+    });
+  } catch (e) {
+    console.warn('[translate-ext] context menu setup failed:', e);
+  }
+}
+
+type Sender = {
+  id?: string;
+  url?: string;
+  tab?: { id?: number; windowId?: number };
+};
+
+/**
+ * NATIVE_HOST_CALL даёт доступ к локальному процессу, поэтому принимаем его только
+ * от страниц самого расширения (offscreen и т.п.), но не от контент-скриптов
+ * на чужих страницах и не от других расширений.
+ */
+function isOwnExtensionPage(sender: Sender): boolean {
+  if (sender.id !== browser.runtime.id) return false;
+  if (sender.tab) return false; // контент-скрипт во вкладке
+  // Типы WXT допускают только известные пути бандла; нам нужен корень расширения.
+  const origin = (browser.runtime as unknown as { getURL: (path: string) => string }).getURL('/');
+  return typeof sender.url === 'string' && sender.url.startsWith(origin);
+}
+
+async function handle(msg: Msg, sender: Sender): Promise<unknown> {
   switch (msg.type) {
     case 'PING':
       return { ok: true };
 
     case 'OPEN_OPTIONS':
-      browser.runtime.openOptionsPage();
-      return { ok: true };
+      try {
+        await browser.runtime.openOptionsPage();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: `openOptionsPage failed: ${String(e)}` };
+      }
 
     case 'SCAN_TAB': {
       await ensureContentScript(msg.tabId);
@@ -97,6 +130,9 @@ async function handle(
 
     case 'NATIVE_HOST_CALL':
       // Маршрут для offscreen: там недоступен chrome.runtime.sendNativeMessage.
+      if (!isOwnExtensionPage(sender)) {
+        return { ok: false, error: 'NATIVE_HOST_CALL is only allowed from extension pages' };
+      }
       return sendNativeMessage(msg.request);
 
     default:
@@ -129,12 +165,22 @@ async function translateByEngine(
   }
 
   if (settings.engine === 'backend') {
-    return translateDataUrl(dataUrl, regionOnly);
+    return translateDataUrl(dataUrl, settings, regionOnly);
   }
 
   // Локальный движок: переслать в offscreen-документ (владеет OCR+NMT воркерами).
   // Настройки передаём сообщением: в offscreen недоступен chrome.storage.
-  await ensureOffscreen();
+  try {
+    await ensureOffscreen();
+  } catch (e) {
+    return {
+      source_text: '',
+      translation: '',
+      model: 'local',
+      latency_ms: 0,
+      error: e instanceof Error ? e.message : String(e),
+    } satisfies TranslateResult;
+  }
   return browser.runtime.sendMessage({
     type: 'TRANSLATE_LOCAL',
     target: 'offscreen',
@@ -168,8 +214,11 @@ function i18nMissingKey(model: string): string {
   return `${vendor} API key is not configured — open Settings and add your key.`;
 }
 
-async function translateDataUrl(dataUrl: string, regionOnly: boolean): Promise<TranslateResult> {
-  const s = await getSettings();
+async function translateDataUrl(
+  dataUrl: string,
+  s: Awaited<ReturnType<typeof getSettings>>,
+  regionOnly: boolean,
+): Promise<TranslateResult> {
   const blob = await (await fetch(dataUrl)).blob();
   return translateImage({
     backendUrl: s.backendUrl,
@@ -212,6 +261,8 @@ async function ensureContentScript(tabId: number): Promise<void> {
 /**
  * Открыть offscreen-документ (reason WORKERS) для локального движка и дождаться готовности.
  * В нём живут tesseract-воркер и ONNX NMT-воркер.
+ * Бросает понятную ошибку, если документ не создан или не ответил на PING
+ * (раньше функция молча завершалась, и дальше падало «Receiving end does not exist»).
  */
 async function ensureOffscreen(): Promise<void> {
   const api = (browser as unknown as {
@@ -220,7 +271,7 @@ async function ensureOffscreen(): Promise<void> {
       createDocument: (p: { url: string; reasons: string[]; justification: string }) => Promise<void>;
     };
   }).offscreen;
-  if (!api) return;
+  if (!api) throw new Error('Local engine is unavailable: offscreen API is not supported by this browser');
 
   const isCreated = api.hasDocument ? await api.hasDocument().catch(() => false) : false;
   if (!isCreated) {
@@ -230,8 +281,13 @@ async function ensureOffscreen(): Promise<void> {
         reasons: ['WORKERS'],
         justification: 'Run local OCR (tesseract.js) and offline translation (ONNX) web workers',
       });
-    } catch {
-      // Документ offscreen может быть только один — конкурентный create не страшен.
+    } catch (e) {
+      // Документ offscreen может быть только один: если его уже создал конкурентный
+      // вызов — нормально. Иначе это настоящая ошибка создания.
+      const existsNow = api.hasDocument ? await api.hasDocument().catch(() => false) : false;
+      if (!existsNow && !/single offscreen|only a single/i.test(String(e))) {
+        throw new Error(`Failed to create offscreen document: ${String(e)}`);
+      }
     }
   }
 
@@ -248,4 +304,5 @@ async function ensureOffscreen(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, 50));
   }
+  throw new Error('Local engine is unavailable: offscreen document did not respond');
 }
