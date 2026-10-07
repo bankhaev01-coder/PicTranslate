@@ -11,7 +11,7 @@ import { getVendorManifest } from '@/lib/local/vendor';
 import { resolveOcrLanguages } from '@/lib/local/ocrModels';
 import { buildLocalCacheKey, localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
 import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
-import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
+import { chunkText, detectRuEn, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
@@ -293,7 +293,11 @@ async function localPipeline(
           source_text: cloud.sourceText,
           translation: cloud.translatedText,
           model: 'cloud:parseImage',
-          detected_language: isMostlyCyrillic(cloud.sourceText) ? 'ru' : 'en',
+          // Явно заданный язык исходника надёжнее эвристики; иначе ru/en или null.
+          detected_language:
+            settings.sourceLang && settings.sourceLang !== 'auto'
+              ? settings.sourceLang
+              : detectRuEn(cloud.sourceText),
           latency_ms: elapsed(),
         };
         await localCacheSet(scope, cacheId, cloudResult);
