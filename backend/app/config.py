@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     ocr_dpi: int = 300
 
     # ── Провайдер перевода для локального OCR-пути ──
-    local_translation_provider: str = "openai"  # none | openai | gemini
+    # По умолчанию "none": без ключей локальный режим отдаёт OCR, а не 503.
+    local_translation_provider: str = "none"  # none | openai | gemini
 
     # ── Кеш ──
     redis_url: str = ""

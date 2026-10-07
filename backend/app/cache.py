@@ -29,6 +29,15 @@ def _fs_safe(key: str) -> str:
     return _UNSAFE_FS.sub("_", key)
 
 
+def _effective_ttl(ttl: int | None, default: int) -> int:
+    """None → TTL кеша по умолчанию; 0 и меньше → не кешировать.
+
+    Раньше стояло `ttl or self._ttl`: явный ttl=0 молча превращался в TTL
+    по умолчанию (сутки), а CACHE_TTL_SECONDS=0 в Redis давал ошибку setex.
+    """
+    return default if ttl is None else ttl
+
+
 def image_hash(image_bytes: bytes) -> str:
     return hashlib.sha256(image_bytes).hexdigest()
 
@@ -44,7 +53,10 @@ class RedisCache:
         return json.loads(raw) if raw else None
 
     def set(self, key: str, value, ttl: int | None = None):
-        self._r.setex(key, ttl or self._ttl, json.dumps(value))
+        seconds = _effective_ttl(ttl, self._ttl)
+        if seconds <= 0:
+            return
+        self._r.setex(key, seconds, json.dumps(value))
 
 
 class FileCache:
@@ -76,9 +88,12 @@ class FileCache:
         return data
 
     def set(self, key: str, value, ttl: int | None = None):
+        seconds = _effective_ttl(ttl, self._ttl)
+        if seconds <= 0:
+            return
         p = self._path(key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        expires_at = time.time() + (ttl or self._ttl)
+        expires_at = time.time() + seconds
         p.write_text(json.dumps({_EXPIRES: expires_at, "value": value}), encoding="utf-8")
 
 
