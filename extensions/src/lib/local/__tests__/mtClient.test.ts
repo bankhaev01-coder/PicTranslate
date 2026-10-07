@@ -11,9 +11,14 @@ class FakeWorker {
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: ((e: ErrorEvent) => void) | null = null;
   readonly sent: Array<Record<string, unknown>> = [];
+  terminated = false;
 
   postMessage(msg: Record<string, unknown>): void {
     this.sent.push(msg);
+  }
+
+  terminate(): void {
+    this.terminated = true;
   }
 
   reply(msg: Record<string, unknown>): void {
@@ -85,21 +90,36 @@ describe('MtClient', () => {
     expect(client.isReady('en-ru')).toBe(true);
   });
 
+  it('rejects translation before the pair is initialized, without asking the worker', async () => {
+    const client = new MtClient();
+    await expect(client.translate('en-ru', 'hello')).rejects.toThrow('MT_NOT_INITIALIZED');
+    expect(worker?.sent ?? []).toHaveLength(0);
+  });
+
   it('rejects translation with the worker error text (MT_NOT_INITIALIZED)', async () => {
     const client = new MtClient();
+    const init = client.ensurePair('en-ru', vendor);
+    worker?.reply({ op: 'ready', id: worker.sent[0].id, pair: 'en-ru' });
+    await init;
+
     const pending = client.translate('en-ru', 'hello');
-    expect(worker?.sent[0]).toMatchObject({ op: 'translate', pair: 'en-ru', text: 'hello' });
-    worker?.reply({ op: 'error', id: worker.sent[0].id, error: 'MT_NOT_INITIALIZED' });
+    expect(worker?.sent[1]).toMatchObject({ op: 'translate', pair: 'en-ru', text: 'hello' });
+    worker?.reply({ op: 'error', id: worker.sent[1].id, error: 'MT_NOT_INITIALIZED' });
     await expect(pending).rejects.toThrow('MT_NOT_INITIALIZED');
   });
 
   it('rejects every pending request when the worker itself crashes', async () => {
     const client = new MtClient();
+    const init = client.ensurePair('en-ru', vendor);
+    worker?.reply({ op: 'ready', id: worker.sent[0].id, pair: 'en-ru' });
+    await init;
+
     const first = client.translate('en-ru', 'one');
     const second = client.translate('en-ru', 'two');
     worker?.crash('wasm aborted');
     await expect(first).rejects.toThrow('mt worker: wasm aborted');
     await expect(second).rejects.toThrow('mt worker: wasm aborted');
+    expect(worker?.terminated).toBe(true);
     // После сбоя воркер пересоздаётся: готовность пары тоже сброшена.
     expect(client.isReady('en-ru')).toBe(false);
   });
