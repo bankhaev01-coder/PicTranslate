@@ -11,7 +11,7 @@ import { getVendorManifest } from '@/lib/local/vendor';
 import { resolveOcrLanguages } from '@/lib/local/ocrModels';
 import { buildLocalCacheKey, localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
 import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
-import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair, resolveDetectedLanguage } from '@/lib/local/text';
+import { chunkText, guessSourceLang, joinOcrLines, pickPair, resolveDetectedLanguage } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
@@ -419,6 +419,7 @@ async function localPipeline(
     if (!externalFirst && settings.externalMt !== 'off') {
       return tryExternal();
     }
+    if (pick.unknownSource) return fail(i18n.t('local.errSourceUnknown'), sourceText);
     return fail(i18n.t('local.errPairMissing', { pair: pick.missingPair ?? '?' }), sourceText);
   }
 
@@ -542,5 +543,6 @@ function guessExternalDirection(
 ): { from: string; to: string } {
   const to = settings.targetLang;
   if (settings.sourceLang !== 'auto') return { from: settings.sourceLang, ...{ to } };
-  return { from: isMostlyCyrillic(sourceText) ? 'ru' : 'en', to };
+  // При 'auto' в сервис уходит source='auto'; from — только метка модели в результате.
+  return { from: guessSourceLang(sourceText) ?? 'auto', to };
 }
