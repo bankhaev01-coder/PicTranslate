@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, isMostlyCyrillic, joinOcrLines, normalizeMtInput, pickPair } from '../text';
+import { chunkText, detectRuEn, isMostlyCyrillic, joinOcrLines, normalizeMtInput, pickPair } from '../text';
 
 const AVAILABLE = ['en-ru', 'ru-en'];
 const DOWNLOADED = ['en-ru'];
@@ -141,4 +141,11 @@ describe('normalizeMtInput', () => {
   it('keeps a single-line text unchanged', () => {
     expect(normalizeMtInput('Hello world')).toBe('Hello world');
   });
+});
+
+describe('detectRuEn', () => {
+  it('detects russian', () => expect(detectRuEn('Привет, мир!')).toBe('ru'));
+  it('detects english', () => expect(detectRuEn('Hello, world!')).toBe('en'));
+  it('does not label japanese as english', () => expect(detectRuEn('こんにちは世界')).toBeNull());
+  it('does not guess for very short text', () => expect(detectRuEn('ab')).toBeNull());
 });

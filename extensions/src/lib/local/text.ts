@@ -171,3 +171,25 @@ export function chunkText(text: string, maxLen = 400): string[] {
   flush();
   return chunks;
 }
+
+
+/**
+ * Язык исходника только там, где мы в нём уверены: 'ru' (кириллица) или 'en'
+ * (латиница). Для других письменностей (японский, корейский, ...) и коротких
+ * строк — null, а не ложный 'en'.
+ */
+export function detectRuEn(text: string): 'ru' | 'en' | null {
+  let latin = 0;
+  let cyr = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (/\p{Script=Latin}/u.test(ch)) latin++;
+    else if (/\p{Script=Cyrillic}/u.test(ch)) cyr++;
+    else if (/\p{L}/u.test(ch)) other++;
+  }
+  const letters = latin + cyr + other;
+  if (letters < 4) return null;
+  if (cyr / letters >= 0.5) return 'ru';
+  if (latin / letters >= 0.8) return 'en';
+  return null;
+}
