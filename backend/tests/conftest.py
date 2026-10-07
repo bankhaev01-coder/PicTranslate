@@ -21,7 +21,7 @@ class FakeResult:
         self.translation = "привет"
         self.detected_language = "en"
         self.boxes = []
-        self._latency = 1
+        self.latency_ms = 1
 
     def to_translate_result(self, model_name: str, latency_ms: int):
         from app.schemas.translate import TranslateResult

@@ -34,3 +34,21 @@ def test_unconfigured_provider_raises(monkeypatch, provider):
     monkeypatch.setattr(translator, "get_settings", lambda: Settings(_env_file=None, openai_api_key="", gemini_api_key=""))
     with pytest.raises(translator.TranslationNotConfigured):
         asyncio.run(translator.translate_text("hi", "ru", provider=provider))
+
+
+def test_shared_client_is_reused_and_closed():
+    async def scenario():
+        a = translator._get_client()
+        b = translator._get_client()
+        assert a is b
+        await translator.aclose_client()
+        assert a.is_closed
+        c = translator._get_client()
+        assert c is not a
+        await translator.aclose_client()
+
+    asyncio.run(scenario())
+
+
+def test_default_local_provider_is_none():
+    assert Settings(_env_file=None).local_translation_provider == "none"

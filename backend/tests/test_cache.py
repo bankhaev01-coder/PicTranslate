@@ -70,3 +70,29 @@ def test_file_cache_reads_legacy_entries_without_envelope():
         old = p.stat().st_mtime - 7200
         os.utime(p, (old, old))
         assert c.get("legacy") is None
+
+
+def test_file_cache_zero_ttl_is_not_stored():
+    """ttl=0 раньше превращался в TTL по умолчанию (`ttl or self._ttl`)."""
+    with tempfile.TemporaryDirectory() as d:
+        c = FileCache(d, ttl=3600)
+        c.set("zero", {"k": 1}, ttl=0)
+        assert c.get("zero") is None
+        assert not list(Path(d).rglob("*.json"))
+        z = FileCache(d, ttl=0)
+        z.set("cfg-zero", {"k": 2})
+        assert z.get("cfg-zero") is None
+
+
+def test_redis_cache_zero_ttl_skips_setex():
+    from app.cache import RedisCache
+
+    calls = []
+    c = RedisCache.__new__(RedisCache)
+    c._r = type("R", (), {"setex": lambda self, *a: calls.append(a)})()
+    c._ttl = 0
+    c.set("k", {"v": 1})
+    c.set("k", {"v": 1}, ttl=0)
+    assert calls == []
+    c.set("k", {"v": 1}, ttl=5)
+    assert calls and calls[0][1] == 5
