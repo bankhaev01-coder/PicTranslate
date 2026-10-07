@@ -193,3 +193,8 @@ export function detectRuEn(text: string): 'ru' | 'en' | null {
   if (latin / letters >= 0.8) return 'en';
   return null;
 }
+
+/** Язык исходника: явный из настроек, иначе ru/en по письму, иначе null. */
+export function resolveDetectedLanguage(sourceLang: string | undefined, text: string): string | null {
+  return sourceLang && sourceLang !== 'auto' ? sourceLang : detectRuEn(text);
+}

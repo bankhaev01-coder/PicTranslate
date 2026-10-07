@@ -11,7 +11,7 @@ import { getVendorManifest } from '@/lib/local/vendor';
 import { resolveOcrLanguages } from '@/lib/local/ocrModels';
 import { buildLocalCacheKey, localCacheClear, localCacheGet, localCacheSet, sha256Hex } from '@/lib/local/localCache';
 import { computePad, grayscaleInPlace, upscaleToMinTextHeight } from '@/lib/local/preprocess';
-import { chunkText, detectRuEn, isMostlyCyrillic, joinOcrLines, pickPair } from '@/lib/local/text';
+import { chunkText, isMostlyCyrillic, joinOcrLines, pickPair, resolveDetectedLanguage } from '@/lib/local/text';
 import { listPairs } from '@/lib/local/registry';
 import { translateLongText, type MtProvider } from '@/lib/local/externalMt';
 import { recognizeBest, type OcrResult } from '@/lib/local/ocr';
@@ -294,10 +294,7 @@ async function localPipeline(
           translation: cloud.translatedText,
           model: 'cloud:parseImage',
           // Явно заданный язык исходника надёжнее эвристики; иначе ru/en или null.
-          detected_language:
-            settings.sourceLang && settings.sourceLang !== 'auto'
-              ? settings.sourceLang
-              : detectRuEn(cloud.sourceText),
+          detected_language: resolveDetectedLanguage(settings.sourceLang, cloud.sourceText),
           latency_ms: elapsed(),
         };
         await localCacheSet(scope, cacheId, cloudResult);
@@ -370,7 +367,8 @@ async function localPipeline(
     return { source_text: '', translation: '', model: 'local', boxes: [], latency_ms: elapsed() };
   }
 
-  const detected = isMostlyCyrillic(sourceText) ? 'ru' : 'en';
+  // Не помечаем японский/корейский и т.п. как 'en': неизвестное письмо → null.
+  const detected = resolveDetectedLanguage(settings.sourceLang, sourceText);
 
   // Внешний переводчик включён и приоритетнее локальной модели?
   const externalFirst = settings.externalMt !== 'off' && settings.externalMtPriority === 'prefer';
@@ -494,7 +492,7 @@ function externalMtOptions(settings: LocalEngineSettings): { provider: MtProvide
 async function externalTranslate(
   settings: LocalEngineSettings,
   sourceText: string,
-  detected: string,
+  detected: string | null,
   scope: string,
   cacheId: string,
   elapsed: () => number,
