@@ -21,9 +21,12 @@
 
 ### Перевод 22 страниц
 
-<img width="280" alt="Перевод 22 страниц" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" />
-
-<img width="380" alt="Перевод реплик на странице манги" src="assets/manga-22-pages.png" />
+<table>
+  <tr>
+    <td><img width="280" alt="Перевод 22 страниц" src="https://github.com/user-attachments/assets/236dc4bb-34a4-4576-aae1-5fc562840300" /></td>
+    <td><img width="330" alt="Перевод реплик на странице манги" src="assets/manga-22-pages.png" /></td>
+  </tr>
+</table>
 
 [Смотреть демонстрационное видео](https://github.com/bankhaev01-coder/PicTranslate/raw/refs/heads/main/assets/demo.mkv)
 
